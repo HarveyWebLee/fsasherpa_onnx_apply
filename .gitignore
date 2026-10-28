@@ -1,0 +1,17 @@
+﻿.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+models/**
+!models/.gitkeep
+outputs/**
+!outputs/.gitkeep
+*.wav
+!static/
+.DS_Store
+Thumbs.db
+*.tar.bz2
+*.tar.gz
+.env

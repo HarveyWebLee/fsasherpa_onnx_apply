@@ -28,9 +28,13 @@ fsasherpa-onnx-test/
   scripts/
     download_model.ps1
     cli_tts.py
+    bench_tts_speed.py
+    bench_cpu_vs_cuda.py
+    ensure_nvidia_path.ps1
   models/             # 大模型（gitignore，需单独下载）
   outputs/            # 合成出的 wav
   requirements.txt
+  requirements-cuda.txt  # 可选：CUDA/cuDNN pip 运行时
   run_web.ps1
   run_web.sh
   run_web.bat
@@ -139,6 +143,61 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 19658
 期望输出多行 `chunk#N: ... bytes`，最后 `RESULT ok=True`。
 
 
+
+
+## NVIDIA CUDA 加速（可选）
+
+本机 GPU：**GTX 1650 Ti**，驱动 546.33（CUDA 12.3）。已验证可加载 sherpa-onnx **CUDA EP**（`onnxruntime_providers_cuda.dll`），合成时 GPU 利用率可达约 40–45%。
+
+> 重要：PyPI 默认的 `sherpa-onnx` CPU 轮子**不带** CUDA EP；仅设 `TTS_PROVIDER=cuda` 会静默 Fallback 到 CPU。必须安装官方 **+cuda12.cudnn9** 轮子，并准备 cuDNN/CUDA 运行时 DLL。
+
+### 安装（Python 3.14 / Windows）
+
+```powershell
+# 1) 换成 CUDA 版 sherpa-onnx（与 2.0.1 对齐）
+pip uninstall -y sherpa-onnx sherpa-onnx-core
+pip install "sherpa-onnx==2.0.1+cuda12.cudnn9" --no-index -f https://k2-fsa.github.io/sherpa/onnx/cuda-cn.html
+
+# 2) CUDA / cuDNN 运行时（本仓库未捆绑 Toolkit；用 pip 包即可）
+pip install -r requirements-cuda.txt
+```
+
+说明：`scripts/ensure_nvidia_path.ps1` / `run_web.*` 会在 `TTS_PROVIDER=cuda` 时自动把 `.venv\Lib\site-packages\nvidia\*\bin` 加入 PATH。
+
+### 启动（端口 19658）
+
+```powershell
+$env:TTS_PROVIDER = "cuda"
+$env:TTS_NUM_THREADS = "2"
+.\run_web.ps1
+```
+
+浏览器：http://127.0.0.1:19658
+
+对比基准脚本（同一段中文，预热后测整段 + 流式）：
+
+```powershell
+.\scripts\ensure_nvidia_path.ps1
+.\.venv\Scripts\python.exe .\scripts\bench_cpu_vs_cuda.py
+```
+
+### CPU vs CUDA 对比（同一段中文）
+
+文本：`你好，欢迎使用本地文本转语音测试。第一句先出声。第二句继续播放。`  
+条件：Melo int8 / 44100 Hz / `num_threads=2` / GTX 1650 Ti
+
+| 模式 | 整段耗时 | 音频时长 | RTF | 流式总耗时 | 流式 RTF | 备注 |
+|------|----------|----------|-----|------------|----------|------|
+| **CPU 基线（优化前记录）** | **13.639 s** | **5.606 s** | **2.433** | **约 13.649 s** | **2.359** | 用户记录，CPU 轮子 |
+| CPU（本轮，CUDA 轮子内 CPU EP） | 18.102 s | 5.703 s | 3.172 | 17.989 s | 3.197 | 同 sherpa `2.0.1+cuda12.cudnn9` |
+| **CUDA** | **18.365 s** | **5.785 s** | **3.174** | **18.463 s** | **3.288** | GPU util max约45%，已确认非 Fallback |
+
+结论（本机）：
+
+- CUDA **可以真正跑在 GPU 上**（无 "Fallback to cpu"，nvidia-smi 有负载）。
+- 对 **Melo 44.1 kHz int8 + GTX 1650 Ti**，CUDA **没有**相对 CPU 基线加速；与同轮子 CPU EP 基本持平甚至略慢（小模型 + 移动 GPU 常见）。
+- 若以 CPU 延迟优先：可继续用官方 CPU 轮子 + `TTS_PROVIDER=cpu`；若要试更大模型 / 桌面独显，保留 CUDA 轮子更有价值。
+
 ## 如何加速（降低每句耗时）
 
 ### 原因（本机实测）
@@ -171,7 +230,7 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 19658
 # 先跑基准再改线程（本机 2 通常最好）
 .\.venv\Scripts\python.exe .\scripts\bench_tts_speed.py
 $env:TTS_NUM_THREADS = "2"
-$env:TTS_PROVIDER = "cpu"    # 有 CUDA 版 onnxruntime 时可试 cuda
+$env:TTS_PROVIDER = "cpu"    # GPU 见上文「NVIDIA CUDA 加速」；本机 Melo 未优于 CPU 基线
 .\run_web.ps1
 ```
 
@@ -196,7 +255,7 @@ $env:TTS_MODEL_DIR = "$PWD\models\vits-melo-tts-zh_en-8k"
 
 - 插电运行，避免散热降频
 - 合成时少跑其它重 CPU 任务
-- 有 NVIDIA GPU 时可试 CUDA provider
+- 有 NVIDIA GPU：见上文「NVIDIA CUDA 加速」；本机 Melo+1650Ti 实测未优于 CPU 基线
 - 要「秒回」级别延迟，需换更小/更低采样率模型，单靠调线程不够
 
 

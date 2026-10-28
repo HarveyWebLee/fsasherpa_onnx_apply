@@ -183,8 +183,7 @@ $env:TTS_NUM_THREADS = "2"
 - 服务端会 **重建 OfflineTts**（线程安全，等待进行中的合成结束），并短句预热
 - 切换后的整段/流式合成仍显示 **总时长**，便于开/关对比
 - **热切换** 无需重启进程；但若进程启动时未把 nvidia */bin 加入 PATH，首次切到 CUDA 会由引擎自动补 PATH。若未安装 CUDA 轮子/运行时，开关会禁用
-- **重启进程**（TTS_PROVIDER=cuda + 
-un_web.ps1）适合固定用 GPU 的日常启动
+- **重启进程**（TTS_PROVIDER=cuda + run_web.ps1）适合固定用 GPU 的日常启动
 
 对比基准脚本（同一段中文，预热后测整段 + 流式）：
 

@@ -15,7 +15,14 @@ import numpy as np
 import sherpa_onnx
 
 ROOT = Path(__file__).resolve().parent.parent
-MODELS_ROOT = ROOT / "models"
+
+def _models_root() -> Path:
+    env = os.environ.get("TTS_MODELS_ROOT") or os.environ.get("FSATTS_MODELS_ROOT")
+    if env:
+        return Path(env)
+    return ROOT / "models"
+
+MODELS_ROOT = _models_root()
 DEFAULT_MODEL_ID = "melo-zh-en-44k"
 DEFAULT_MODEL_DIR = MODELS_ROOT / "vits-melo-tts-zh_en"
 

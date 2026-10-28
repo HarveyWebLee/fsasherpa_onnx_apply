@@ -1,5 +1,5 @@
-﻿#!/usr/bin/env bash
-# Start sherpa-onnx TTS web UI (Git Bash / MSYS2 / macOS / Linux)
+#!/usr/bin/env bash
+# Start sherpa-onnx TTS plugin service (Git Bash / MSYS2 / macOS / Linux)
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT"
@@ -17,9 +17,11 @@ else
 fi
 
 export TTS_NUM_THREADS="${TTS_NUM_THREADS:-2}"
+export TTS_HOST="${TTS_HOST:-0.0.0.0}"
+export TTS_PORT="${TTS_PORT:-19658}"
+export TTS_CORS_ORIGINS="${TTS_CORS_ORIGINS:-*}"
 PROVIDER="${TTS_PROVIDER:-cpu}"
 
-# Windows: prepend nvidia CUDA/cuDNN bins when using cuda
 if [[ "${PROVIDER}" == "cuda" ]]; then
   NVIDIA_ROOT="$ROOT/.venv/Lib/site-packages/nvidia"
   if [[ -d "$NVIDIA_ROOT" ]]; then
@@ -33,5 +35,5 @@ if [[ "${PROVIDER}" == "cuda" ]]; then
   fi
 fi
 
-echo "启动 TTS Web: http://127.0.0.1:19658  provider=${PROVIDER} threads=${TTS_NUM_THREADS}"
-exec "$PY" -m uvicorn app.main:app --host 127.0.0.1 --port 19658
+echo "启动 TTS 插件服务: http://${TTS_HOST}:${TTS_PORT}  (本机 http://127.0.0.1:${TTS_PORT})  provider=${PROVIDER} threads=${TTS_NUM_THREADS} CORS=${TTS_CORS_ORIGINS}"
+exec "$PY" -m uvicorn app.main:app --host "$TTS_HOST" --port "$TTS_PORT"

@@ -14,7 +14,10 @@ import numpy as np
 import soundfile as sf
 from contextlib import asynccontextmanager
 
+import os
+
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -22,9 +25,37 @@ from starlette.websockets import WebSocketState
 
 from .tts_engine import ROOT, engine
 
-STATIC_DIR = ROOT / "static"
-OUTPUT_DIR = ROOT / "outputs"
+
+def _resolve_static_dir() -> Path:
+    env = os.environ.get("FSATTS_STATIC_DIR") or os.environ.get("TTS_STATIC_DIR")
+    if env:
+        p = Path(env)
+        if p.is_dir():
+            return p
+    cand = ROOT / "static"
+    if cand.is_dir():
+        return cand
+    # frozen: next to exe
+    import sys
+
+    if getattr(sys, "frozen", False):
+        meipass = Path(getattr(sys, "_MEIPASS", Path(sys.executable).resolve().parent))
+        if (meipass / "static").is_dir():
+            return meipass / "static"
+        beside = Path(sys.executable).resolve().parent / "static"
+        if beside.is_dir():
+            return beside
+    return cand
+
+
+STATIC_DIR = _resolve_static_dir()
+OUTPUT_DIR = Path(os.environ.get("TTS_OUTPUT_DIR") or (ROOT / "outputs"))
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+# Plugin listen defaults (override with TTS_HOST / TTS_PORT)
+DEFAULT_HOST = os.environ.get("TTS_HOST", "0.0.0.0")
+DEFAULT_PORT = int(os.environ.get("TTS_PORT", "19658"))
+CORS_ORIGINS_RAW = os.environ.get("TTS_CORS_ORIGINS", "*").strip()
 
 
 @asynccontextmanager
@@ -47,10 +78,35 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(
-    title="sherpa-onnx TTS Demo",
-    description="基于 sherpa-onnx 的中英 TTS（多模型切换 + CUDA + 实时流）",
-    version="1.5.0",
+    title="sherpa-onnx TTS Plugin",
+    description="本地 TTS 插件服务（CORS + 多模型 + 流式）；供本机网页及其他浏览器通过 HTTP/WS 调用",
+    version="1.6.0",
     lifespan=lifespan,
+)
+
+_cors_origins = [o.strip() for o in CORS_ORIGINS_RAW.split(",") if o.strip()]
+if not _cors_origins:
+    _cors_origins = ["*"]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins,
+    allow_credentials=False if _cors_origins == ["*"] else True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=[
+        "X-Audio-Duration",
+        "X-Elapsed-Seconds",
+        "X-Elapsed-Ms",
+        "X-RTF",
+        "X-Sample-Rate",
+        "X-Provider",
+        "X-Model-Id",
+        "X-Speed",
+        "X-Sid",
+        "X-Saved-As",
+        "X-Stream-Format",
+        "X-Channels",
+    ],
 )
 
 if STATIC_DIR.is_dir():
@@ -97,10 +153,16 @@ def index() -> FileResponse:
 def health():
     payload = {
         "ok": True,
+        "service": "fsatts",
+        "version": app.version,
         "model_ready": engine.model_ready(),
         "model_dir": str(engine.model_dir),
         "missing": engine.missing_files() if not engine.model_ready() else [],
         "streaming": True,
+        "listen_host": DEFAULT_HOST,
+        "listen_port": DEFAULT_PORT,
+        "cors_origins": _cors_origins,
+        "plugin": True,
     }
     payload.update(engine.runtime_info())
     return payload
@@ -413,8 +475,8 @@ def main() -> None:
 
     uvicorn.run(
         "app.main:app",
-        host="127.0.0.1",
-        port=19658,
+        host=DEFAULT_HOST,
+        port=DEFAULT_PORT,
         reload=False,
     )
 

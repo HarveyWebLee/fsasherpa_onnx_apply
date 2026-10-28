@@ -1,71 +1,100 @@
-# 跨平台本地插件服务打包方案（草案）
+# 跨平台本地插件服务打包
 
-目标：把本仓库打成可在 **Windows x64**、**Linux amd64**、**麒麟 V10 arm64** 上运行的本地 TTS 插件服务，供浏览器/其他客户端通过 HTTP（及 WebSocket）调用。
+把本仓库打成可在 **Windows x64**、**Linux amd64**、**麒麟 V10 arm64** 运行的本地 TTS 插件服务，供浏览器/客户端通过 HTTP / WebSocket 调用。
 
-## 产品形态
+## 默认监听
 
-- 本地常驻服务：`127.0.0.1:<port>`（当前开发默认 **19658**）
-- 对外 API：`POST /api/tts`、`WS /ws/tts`、`GET /api/status`、`POST /api/models`、`POST /api/provider`
-- 模型文件：与可执行文件分离（推荐），首次启动下载或随安装包附带 `models/`
-- 一键脚本：`scripts/build/<platform>.sh|.ps1` 产出安装包/压缩包
+| 变量 | 默认 | 说明 |
+|------|------|------|
+| `TTS_HOST` | `0.0.0.0` | 插件模式监听所有网卡；仅本机可改 `127.0.0.1` |
+| `TTS_PORT` | `19658` | 服务端口 |
+| `TTS_CORS_ORIGINS` | `*` | CORS；生产建议改为具体源，逗号分隔 |
+| `TTS_MODELS_ROOT` | `./models`（打包后为 exe 旁 `models/`） | 模型目录（**外置**，不打进二进制） |
+| `TTS_PROVIDER` | `cpu` | `cpu` / `cuda`（CUDA 需额外运行时） |
 
-## 技术选型（与 sherpa-onnx 原生依赖）
+健康检查：`GET http://127.0.0.1:19658/api/health`
 
-| 方案 | 优点 | 风险 / 成本 | 建议 |
-|------|------|-------------|------|
-| **PyInstaller** | 成熟、Windows/Linux 易出单目录包 | arm64/麒麟需在目标机或对应 wheel 环境打包；需收集 `sherpa_onnx`、ORT、CUDA 可选 DLL | **首选 MVP** |
-| **Nuitka** | 可编译成更接近原生二进制 | 编译慢；C 扩展/动态库收集仍复杂 | 二期性能优化 |
-| **Docker** | Linux amd64 交付简单 | 麒麟桌面/无 Docker 场景不适用；GPU 透传另议 | 仅 Linux 服务器可选 |
-| **conda-pack / venv zip** | 实现快 | 体积大、不像安装包 | 内测过渡 |
+## 一键打包
 
-**sherpa-onnx 要点：**
+### Windows x64（可在本仓库直接执行）
 
-- Python 轮子内含原生 `.so` / `.pyd` + 可选 CUDA EP；打包必须 `--collect-all sherpa_onnx`。
-- **CUDA 可选**：默认 CPU 包；CUDA 作 Windows 可选附加组件。
-- **模型不进二进制**：安装包旁挂 `models/`，或首次运行下载。
+```powershell
+.\scripts\build\windows.ps1
+```
 
-## 平台策略
+产物：
 
-### Windows x64（本机可先做）
+- `dist/fsatts-windows-x64/` — 可运行目录（含 `fsatts.exe`、`run.bat`、空 `models/`）
+- `dist/fsatts-windows-x64.zip` — 安装包（解压即用）
 
-- 工具：PyInstaller onedir
-- 脚本：`scripts/build/windows.ps1`
-- 产物：`dist/fsatts/`；入口 `fsatts.exe`
+安装启动：
+
+1. 解压 zip
+2. 把已下载的 `vits-melo-tts-zh_en`（及可选 8k）拷进 `models/`
+3. 双击 `run.bat` 或命令行运行 `fsatts.exe`
+4. 浏览器打开 `http://127.0.0.1:19658`
 
 ### Linux amd64
 
-- 脚本：`scripts/build/linux-amd64.sh`
-- 在目标 glibc 世代上构建
+在 **amd64 Linux**（建议 Ubuntu 22.04+，注意 glibc 兼容）上：
+
+```bash
+python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+chmod +x scripts/build/linux-amd64.sh
+./scripts/build/linux-amd64.sh
+```
+
+产物：`dist/fsatts-linux-amd64/` 与 `dist/fsatts-linux-amd64.tar.gz`。解压后 `./run.sh`。
 
 ### 麒麟 V10 arm64
 
-- **优先在目标机本地构建**（`scripts/build/kylin-v10-arm64.sh`）
-- 需要 aarch64 的 `sherpa-onnx` wheel，或从源码编译
-- 交叉编译不作默认路径
+**必须在 aarch64 真机或 arm64 容器上构建**（x86 上脚本会 exit 2，不会伪造成功）：
 
-## 目录约定（产物）
-
-```text
-dist/fsatts-<os>-<arch>/
-  fsatts(.exe)
-  run.sh / run.bat
-  models/               # 可选预置
-  config.example.env    # TTS_PORT=19658
+```bash
+# 在麒麟 V10 arm64 上
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt   # 需 aarch64 的 sherpa-onnx wheel，否则从源码编
+chmod +x scripts/build/kylin-v10-arm64.sh
+./scripts/build/kylin-v10-arm64.sh
 ```
 
-## 当前骨架
+产物：`dist/fsatts-kylin-v10-arm64.tar.gz`。
 
-- `docs/PACKAGING.md`（本文）
-- `scripts/build/windows.ps1`
-- `scripts/build/linux-amd64.sh`
-- `scripts/build/kylin-v10-arm64.sh`
-- `scripts/build/fsatts.spec.example`
-- `scripts/build/_entrypoint_fsatts.py`
+若 PyPI 无对应 arm64 轮子：按 [k2-fsa/sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) 文档在目标机编译安装后再打包。
 
-本阶段不执行超长全平台编译；Windows 小规模验证后再扩。
+## 技术选型
 
-## 开放问题
+| 方案 | 角色 |
+|------|------|
+| **PyInstaller onedir** | MVP 首选；`--collect-all sherpa_onnx` |
+| Nuitka | 二期可选 |
+| Docker | 仅 Linux 服务器场景可选；桌面麒麟不依赖 Docker |
 
-1. 安装包是否捆绑 44.1k + 8k 模型？
-2. 是否注册 Windows 服务 / systemd？
-3. 是否只绑 127.0.0.1？
+模型 **不** 打进 exe（体积大、便于更新）；CUDA 默认为可选附加，CPU 包可独立运行。
+
+## 可选 installer
+
+- Windows：可用 Inno Setup / NSIS 把 `fsatts-windows-x64` 目录打成 Setup.exe（本仓库未捆绑 ISS 脚本；zip 已足够分发）。
+- Linux：可把 tar.gz 解压到 `/opt/fsatts` 并写 systemd user unit（示例见下）。
+
+```ini
+# ~/.config/systemd/user/fsatts.service （示例）
+[Unit]
+Description=fsatts TTS plugin
+[Service]
+WorkingDirectory=%h/fsatts-linux-amd64
+Environment=TTS_HOST=127.0.0.1
+Environment=TTS_PORT=19658
+ExecStart=%h/fsatts-linux-amd64/fsatts
+Restart=on-failure
+[Install]
+WantedBy=default.target
+```
+
+## 安全提示
+
+默认 `0.0.0.0` + `CORS=*` 方便局域网调试；生产或不可信网络请：
+
+1. `TTS_HOST=127.0.0.1` 或防火墙仅放行可信网段  
+2. `TTS_CORS_ORIGINS=https://your-app.example.com`  
+3. 不要把服务裸暴露到公网

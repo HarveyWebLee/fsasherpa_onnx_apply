@@ -301,7 +301,26 @@ $env:TTS_MODEL_DIR = "$PWD\models\vits-melo-tts-zh_en-8k"
 
 
 
-## 跨平台打包（草案）
+
+## 作为插件服务给其他网页调用
+
+本仓库可作为**本地插件服务**：默认监听 `0.0.0.0:19658`，带 CORS，供其他浏览器页面通过 HTTP/WebSocket 调用 TTS。
+
+- 开发启动：`./run_web.sh` 或 `.un_web.ps1`（可用环境变量 `TTS_HOST` / `TTS_PORT` / `TTS_CORS_ORIGINS`）
+- API 与跨域示例：[docs/PLUGIN_API.md](docs/PLUGIN_API.md)
+- 健康检查：`GET /api/health`
+- 多平台安装包构建：[docs/PACKAGING.md](docs/PACKAGING.md)
+
+```javascript
+// 外站页面示例
+await fetch("http://127.0.0.1:19658/api/tts", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ text: "你好", speed: 1.0, sid: 0 }),
+});
+```
+
+## 跨平台打包
 
 本地插件服务（Windows / Linux amd64 / 麒麟 V10 arm64）方案见 [docs/PACKAGING.md](docs/PACKAGING.md)；骨架脚本在 `scripts/build/`。开发默认端口 **19658**。
 

@@ -1,4 +1,4 @@
-﻿$Root = Split-Path -Parent $MyInvocation.MyCommand.Path
+$Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $Root
 $py = Join-Path $Root ".venv\Scripts\python.exe"
 if (-not (Test-Path $py)) {
@@ -13,6 +13,9 @@ if ($provider -eq "cuda" -or (($provider -ne "cpu") -and (Test-Path $nvidiaSite)
   & (Join-Path $Root "scripts\ensure_nvidia_path.ps1")
 }
 if (-not $env:TTS_NUM_THREADS) { $env:TTS_NUM_THREADS = "2" }
+if (-not $env:TTS_HOST) { $env:TTS_HOST = "0.0.0.0" }
+if (-not $env:TTS_PORT) { $env:TTS_PORT = "19658" }
+if (-not $env:TTS_CORS_ORIGINS) { $env:TTS_CORS_ORIGINS = "*" }
 
-Write-Host ("启动 TTS Web: http://127.0.0.1:19658  provider={0} threads={1}" -f $provider, $env:TTS_NUM_THREADS)
-& $py -m uvicorn app.main:app --host 127.0.0.1 --port 19658
+Write-Host ("启动 TTS 插件服务: http://{0}:{1}  (本机可开 http://127.0.0.1:{1})  provider={2} threads={3} CORS={4}" -f $env:TTS_HOST, $env:TTS_PORT, $provider, $env:TTS_NUM_THREADS, $env:TTS_CORS_ORIGINS)
+& $py -m uvicorn app.main:app --host $env:TTS_HOST --port ([int]$env:TTS_PORT)

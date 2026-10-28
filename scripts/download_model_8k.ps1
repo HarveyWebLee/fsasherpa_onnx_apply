@@ -16,16 +16,16 @@ foreach ($f in $files) {
   }
   $url = "$Base/$Repo/resolve/main/$f"
   Write-Host "Downloading $url"
-  Invoke-WebRequest -Uri $url -OutFile $out -UseBasicParsing
+  & curl.exe -L --fail --retry 3 -o $out $url
+  if ($LASTEXITCODE -ne 0) { throw "download failed: $f" }
 }
 
-# Reuse jieba dict + rule fsts from the 44.1k model if present
 $Src = Join-Path $Root "models\vits-melo-tts-zh_en"
 foreach ($name in @("dict", "phone.fst", "date.fst", "number.fst")) {
   $s = Join-Path $Src $name
   $d = Join-Path $Dest $name
   if (-not (Test-Path $d) -and (Test-Path $s)) {
-    Write-Host "link/copy $name from 44.1k model"
+    Write-Host "copy $name from 44.1k model"
     if (Test-Path $s -PathType Container) {
       Copy-Item $s $d -Recurse -Force
     } else {
@@ -35,5 +35,5 @@ foreach ($name in @("dict", "phone.fst", "date.fst", "number.fst")) {
 }
 
 Write-Host "Done. Start with:"
-Write-Host '  $env:TTS_MODEL_DIR = "'"$Dest"'"'
-Write-Host "  .\\run_web.ps1"
+Write-Host ("  `$env:TTS_MODEL_DIR = '" + $Dest + "'")
+Write-Host "  .\run_web.ps1"

@@ -2,17 +2,20 @@
 
 from __future__ import annotations
 
+import queue
 import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Iterator, Optional
 
 import numpy as np
 import sherpa_onnx
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_MODEL_DIR = ROOT / "models" / "vits-melo-tts-zh_en"
+
+_STREAM_DONE = object()
 
 
 @dataclass
@@ -25,7 +28,7 @@ class SynthResult:
 
 
 class TtsEngine:
-    """Lazy-loaded, thread-safe Offline TTS."""
+    """Lazy-loaded, thread-safe offline TTS."""
 
     def __init__(self, model_dir: Optional[Path] = None, num_threads: int = 2) -> None:
         self.model_dir = Path(model_dir) if model_dir else DEFAULT_MODEL_DIR
@@ -65,7 +68,7 @@ class TtsEngine:
         if not self.model_ready():
             missing = ", ".join(self.missing_files()) or "unknown"
             raise FileNotFoundError(
-                f"模型未就绪，请先运行 scripts/download_model.ps1。"
+                "模型未就绪，请先运行 scripts/download_model.ps1。"
                 f" 缺失: {missing}"
             )
 
@@ -79,22 +82,20 @@ class TtsEngine:
         ]
         rule_fsts = ",".join(str(p) for p in rule_parts if p.is_file())
 
-        vits_kwargs = dict(
-            model=model,
-            lexicon=lexicon,
-            tokens=tokens,
-        )
-        # note: since sherpa-onnx v1.12.15, dict_dir is unused for Melo; keep dict/ for completeness
-
+        # max_num_sentences=1 -> callback fires more often
         config = sherpa_onnx.OfflineTtsConfig(
             model=sherpa_onnx.OfflineTtsModelConfig(
-                vits=sherpa_onnx.OfflineTtsVitsModelConfig(**vits_kwargs),
+                vits=sherpa_onnx.OfflineTtsVitsModelConfig(
+                    model=model,
+                    lexicon=lexicon,
+                    tokens=tokens,
+                ),
                 provider="cpu",
                 debug=False,
                 num_threads=self.num_threads,
             ),
             rule_fsts=rule_fsts,
-            max_num_sentences=2,
+            max_num_sentences=1,
         )
         if not config.validate():
             raise ValueError("OfflineTtsConfig 校验失败，请检查模型文件路径。")
@@ -105,6 +106,9 @@ class TtsEngine:
             if self._tts is None:
                 self._tts = self._build()
             return self._tts
+
+    def sample_rate(self) -> int:
+        return int(self.ensure_loaded().sample_rate)
 
     def synthesize(self, text: str, sid: int = 0, speed: float = 1.0) -> SynthResult:
         text = (text or "").strip()
@@ -138,6 +142,99 @@ class TtsEngine:
             rtf=rtf,
         )
 
+    def synthesize_stream(
+        self,
+        text: str,
+        sid: int = 0,
+        speed: float = 1.0,
+        cancel_event: Optional[threading.Event] = None,
+    ) -> Iterator[tuple[str, object]]:
+        """Yield streaming events from OfflineTts callback.
 
-# singleton used by web app / CLI
+        Yields:
+          ("meta", dict)
+          ("chunk", np.ndarray float32)
+          ("progress", float)
+          ("end", dict)
+          ("error", str)
+        """
+        text = (text or "").strip()
+        if not text:
+            yield ("error", "文本不能为空")
+            return
+        if speed <= 0:
+            yield ("error", "语速必须大于 0")
+            return
+
+        tts = self.ensure_loaded()
+        sample_rate = int(tts.sample_rate)
+        yield (
+            "meta",
+            {
+                "sample_rate": sample_rate,
+                "channels": 1,
+                "format": "f32le",
+                "dtype": "float32",
+            },
+        )
+
+        q: queue.Queue = queue.Queue(maxsize=64)
+        cancel = cancel_event or threading.Event()
+        result_box: dict = {}
+
+        def callback(samples, progress: float) -> int:
+            if cancel.is_set():
+                return 0
+            arr = np.asarray(samples, dtype=np.float32).reshape(-1).copy()
+            q.put(("chunk", arr))
+            q.put(("progress", float(progress)))
+            return 0 if cancel.is_set() else 1
+
+        def worker() -> None:
+            gen = sherpa_onnx.GenerationConfig()
+            gen.sid = int(sid)
+            gen.speed = float(speed)
+            gen.silence_scale = 0.2
+            start = time.time()
+            try:
+                with self._lock:
+                    audio = tts.generate(text, gen, callback)
+                elapsed = time.time() - start
+                samples = (
+                    np.asarray(audio.samples, dtype=np.float32)
+                    if audio is not None
+                    else np.zeros(0, dtype=np.float32)
+                )
+                duration = float(len(samples) / sample_rate) if sample_rate else 0.0
+                result_box["end"] = {
+                    "elapsed_seconds": elapsed,
+                    "audio_duration": duration,
+                    "num_samples": int(len(samples)),
+                    "sample_rate": sample_rate,
+                    "rtf": (elapsed / duration) if duration > 0 else 0.0,
+                }
+            except Exception as exc:  # noqa: BLE001
+                result_box["error"] = str(exc)
+            finally:
+                q.put((_STREAM_DONE, None))
+
+        thread = threading.Thread(target=worker, name="tts-stream", daemon=True)
+        thread.start()
+
+        while True:
+            kind, payload = q.get()
+            if kind is _STREAM_DONE:
+                break
+            yield (kind, payload)
+
+        thread.join(timeout=1.0)
+        if "error" in result_box:
+            yield ("error", result_box["error"])
+            return
+        if "end" in result_box:
+            yield ("end", result_box["end"])
+        else:
+            yield ("error", "合成线程异常结束")
+
+
 engine = TtsEngine()

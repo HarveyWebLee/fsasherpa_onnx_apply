@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
@@ -10,16 +10,16 @@
   <main class="card">
     <header>
       <h1>sherpa-onnx 文本转语音</h1>
-      <p class="sub">模型：vits-melo-tts-zh_en（中文 / 英文 / 中英混合，单说话人）</p>
+      <p class="sub">模型：vits-melo-tts-zh_en · 支持整段合成与 <strong>实时流播放</strong></p>
     </header>
 
     <section class="status" id="statusBox">正在检查模型状态…</section>
 
     <label class="label" for="mode">语言模式（说明用，同一模型）</label>
     <div class="modes" id="modes">
-      <button type="button" class="mode" data-mode="zh" data-sample="你好，欢迎使用本地文本转语音测试。">中文</button>
-      <button type="button" class="mode" data-mode="en" data-sample="Hello, this is a local text to speech demo.">英文</button>
-      <button type="button" class="mode active" data-mode="mixed" data-sample="This is a 中英文的 text to speech 测试例子。">中英混合</button>
+      <button type="button" class="mode" data-mode="zh" data-sample="你好，欢迎使用本地文本转语音测试。第一句先出声。第二句继续播放。">中文</button>
+      <button type="button" class="mode" data-mode="en" data-sample="Hello, this is a local streaming text to speech demo. You should hear audio before synthesis finishes.">英文</button>
+      <button type="button" class="mode active" data-mode="mixed" data-sample="This is a 中英文的 text to speech 实时流式测试例子。第一句。第二句继续。">中英混合</button>
     </div>
 
     <label class="label" for="text">输入文本</label>
@@ -31,18 +31,25 @@
     </div>
 
     <div class="actions">
-      <button id="synthBtn" class="primary" type="button">合成并播放</button>
+      <button id="streamBtn" class="primary" type="button">实时流播放</button>
+      <button id="stopBtn" class="ghost" type="button" disabled>停止</button>
+      <button id="synthBtn" class="ghost" type="button">整段合成下载</button>
       <a id="downloadLink" class="ghost disabled" href="#">下载 WAV</a>
     </div>
 
     <div class="player-wrap">
+      <div class="stream-meter">
+        <div class="bar" id="progressBar"></div>
+      </div>
+      <p class="meta" id="streamMeta">流播放状态：空闲</p>
       <audio id="player" controls></audio>
       <p class="meta" id="meta"></p>
       <p class="error" id="error"></p>
     </div>
 
     <footer>
-      <p>基于 <a href="https://github.com/k2-fsa/sherpa-onnx" target="_blank" rel="noreferrer">k2-fsa/sherpa-onnx</a> Python API。英文词需出现在 lexicon.txt 中才能正确发音。</p>
+      <p>实时流：WebSocket <code>/ws/tts</code> + Web Audio API 边收边播。整段：<code>POST /api/tts</code> 返回完整 WAV。</p>
+      <p>基于 <a href="https://github.com/k2-fsa/sherpa-onnx" target="_blank" rel="noreferrer">k2-fsa/sherpa-onnx</a>。英文词需出现在 lexicon.txt 中。</p>
     </footer>
   </main>
   <script src="/static/app.js"></script>

@@ -97,6 +97,46 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 7860
 
 浏览器打开：http://127.0.0.1:7860
 
+## 实时流播放（边合成边播）
+
+本项目用 sherpa-onnx `OfflineTts.generate(..., callback=...)` 在合成过程中分块回调 PCM，经 **WebSocket** 推到浏览器，前端用 **Web Audio API** 排队播放。
+
+### 网页上怎么用
+
+1. 启动服务（PowerShell / Git Bash / CMD 任选）：
+
+```powershell
+.\run_web.ps1
+```
+
+```bash
+./run_web.sh
+```
+
+2. 打开 http://127.0.0.1:7860
+3. 输入中文 / 英文 / 中英混合文本（可用上方模式按钮填入示例）
+4. 点击 **「实时流播放」** —— 合成尚未结束时就应开始出声；进度条会更新
+5. 需要完整文件时：点 **「整段合成下载」**，或流播放结束后用 **「下载 WAV」**
+6. 播放中可点 **「停止」** 中断
+
+### 接口
+
+| 接口 | 说明 |
+|------|------|
+| `WS /ws/tts` | 实时流（推荐）。客户端发 JSON `{"text","speed","sid"}`；服务端先发 meta JSON，再发 binary float32 LE PCM，期间可发 progress，最后 end/error |
+| `POST /api/tts/stream` | HTTP chunked：首行 JSON meta + 后续 raw f32le（便于脚本验证） |
+| `POST /api/tts` | 整段 WAV（原有） |
+
+### 本地脚本验证流式端点
+
+先启动网页服务，再另开终端：
+
+```powershell
+.\.venv\Scripts\python.exe .\scripts\test_stream_ws.py
+```
+
+期望输出多行 `chunk#N: ... bytes`，最后 `RESULT ok=True`。
+
 ## CLI 验证
 
 ```powershell

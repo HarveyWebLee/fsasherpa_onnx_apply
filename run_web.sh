@@ -16,4 +16,4 @@ else
   exit 1
 fi
 
-exec "$PY" -m uvicorn app.main:app --host 127.0.0.1 --port 7860
+exec "$PY" -m uvicorn app.main:app --host 127.0.0.1 --port 9658

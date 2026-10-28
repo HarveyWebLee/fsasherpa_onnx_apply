@@ -5,4 +5,4 @@ if (-not (Test-Path $py)) {
   Write-Error "未找到 .venv，请先创建虚拟环境并安装依赖"
   exit 1
 }
-& $py -m uvicorn app.main:app --host 127.0.0.1 --port 7860
+& $py -m uvicorn app.main:app --host 127.0.0.1 --port 9658

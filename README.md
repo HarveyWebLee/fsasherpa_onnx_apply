@@ -81,7 +81,7 @@ models/vits-melo-tts-zh_en/dict/
 ```powershell
 cd E:\WORK\CODE\fsasherpa-onnx-test
 .\.venv\Scripts\Activate.ps1
-python -m uvicorn app.main:app --host 127.0.0.1 --port 7860
+python -m uvicorn app.main:app --host 127.0.0.1 --port 9658
 ```
 
 快捷脚本（按终端选择）：
@@ -95,7 +95,7 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 7860
 
 > 不要在 Git Bash 里直接 `./run_web.ps1`：bash 会把 `.ps1` 当 shell 脚本执行，并报 BOM / `Set-Location` 找不到等错误。
 
-浏览器打开：http://127.0.0.1:7860
+浏览器打开：http://127.0.0.1:9658
 
 ## 实时流播放（边合成边播）
 
@@ -113,7 +113,7 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 7860
 ./run_web.sh
 ```
 
-2. 打开 http://127.0.0.1:7860
+2. 打开 http://127.0.0.1:9658
 3. 输入中文 / 英文 / 中英混合文本（可用上方模式按钮填入示例）
 4. 点击 **「实时流播放」** —— 合成尚未结束时就应开始出声；进度条会更新
 5. 需要完整文件时：点 **「整段合成下载」**，或流播放结束后用 **「下载 WAV」**

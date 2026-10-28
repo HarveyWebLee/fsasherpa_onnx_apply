@@ -132,7 +132,8 @@ async function refreshStatus() {
       statusBox.className = "status ok";
       statusBox.textContent =
         `模型已就绪\n目录: ${data.model_dir}\n采样率: ${data.sample_rate || "-"} Hz\n` +
-        `流式: WebSocket ${data.ws_tts || "/ws/tts"}`;
+        流式: WebSocket \n +
+        线程:  · provider: ;
       streamBtn.disabled = false;
       synthBtn.disabled = false;
     } else {

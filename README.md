@@ -118,7 +118,7 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 19658
 4. 点击 **「实时流播放」** —— 合成尚未结束时就应开始出声；进度条会更新
 5. 页面中部 **「文本转语音总时长」** 会实时跳动已用时间；结束后显示服务端/本地总耗时（秒）
 6. 需要完整文件时：点 **「整段合成下载」**，或流播放结束后用 **「下载 WAV」**
-6. 播放中可点 **「停止」** 中断
+7. 播放中可点 **「停止」** 中断
 
 ### 接口
 
@@ -137,6 +137,68 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 19658
 ```
 
 期望输出多行 `chunk#N: ... bytes`，最后 `RESULT ok=True`。
+
+
+## 如何加速（降低每句耗时）
+
+### 原因（本机实测）
+
+机器：Intel i5-10200H（4C/8T），模型：`vits-melo-tts-zh_en` **int8 / 44.1 kHz**（`model.onnx`≈51MB，与 `model.int8.onnx` 同大小）。
+
+| 线程 | 短「你好。」 | 中（~20字，音频≈3.6s） | 长（~74字，音频≈10.4s） |
+|------|-------------|------------------------|-------------------------|
+| 2（最佳） | ≈1.5s，RTF≈3.5 | ≈8.9s，RTF≈2.44 | ≈25.6s，RTF≈2.47 |
+| 4 | 更慢 | ≈9.6s | ≈26.3s |
+| 6 | 更慢 | ≈10.6s | ≈30.3s |
+
+结论：
+
+- **瓶颈是 Melo 44.1kHz 在 CPU 上的推理本身**（RTF≈2.4–3.5），不是重复加载模型、也不是 rule FST。
+- 关掉 `rule_fsts` 几乎无收益；**盲目加大 `num_threads` 在本机反而更慢**。
+- 流式首包（中等两句文本）≈5.2s，总时长≈9s —— 首句合成完才有第一段音频。
+
+### 已做的工程优化
+
+- 进程内 **OfflineTts 只加载一次**，启动时 `preload`
+- 默认 `num_threads=2`（可用 `TTS_NUM_THREADS` 覆盖；请先跑基准再改）
+- `max_num_sentences=1` + 流式 callback，尽早出首包
+- 合并 progress，增大 PCM 队列，减少卡顿
+- 支持 `TTS_MODEL_DIR` / `TTS_PROVIDER` 环境变量
+
+### 立刻可调
+
+```powershell
+# 先跑基准再改线程（本机 2 通常最好）
+.\.venv\Scripts\python.exe .\scripts\bench_tts_speed.py
+$env:TTS_NUM_THREADS = "2"
+$env:TTS_PROVIDER = "cpu"    # 有 CUDA 版 onnxruntime 时可试 cuda
+.\run_web.ps1
+```
+
+体感技巧：**把长文拆成短句**、用网页「实时流播放」——合成未完也能先听到前几句。
+
+### 换更快模型（可选，不删现有 Melo）
+
+| 方案 | 预期 | 说明 |
+|------|------|------|
+| 保持 Melo 44.1k + 线程=2 | 现状最优工程设置 | 音质最好 |
+| [vits-melo-tts-zh_en-8k](https://huggingface.co/Luigi/vits-melo-tts-zh_en-8k) | 大幅加速（官方 x86 RTF≈0.01 量级） | 8 kHz，音质下降；目录另放 |
+| Matcha / 更小中文模型 | 视模型而定 | 中英混合能力可能变弱 |
+
+下载 8k 到独立目录后：
+
+```powershell
+$env:TTS_MODEL_DIR = "$PWD\models\vits-melo-tts-zh_en-8k"
+.\run_web.ps1
+```
+
+### 硬件建议
+
+- 插电运行，避免散热降频
+- 合成时少跑其它重 CPU 任务
+- 有 NVIDIA GPU 时可试 CUDA provider
+- 要「秒回」级别延迟，需换更小/更低采样率模型，单靠调线程不够
+
 
 ## CLI 验证
 
@@ -165,7 +227,8 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 19658
 
 1. **下载失败**：国内访问 GitHub/HF 可能超时，可开代理或使用 hf-mirror 后重跑下载脚本。
 2. **onnxruntime / DLL 报错**：安装 Visual C++ Redistributable。
-3. **首次合成较慢**：模型在第一次请求时加载。
+3. **首次合成较慢**：现已在服务启动时 preload；若仍慢见上文「如何加速」。
+4. **每句要十几秒**：多为 Melo 44.1kHz CPU 推理本身（本机 RTF≈2.5）。线程加太多往往更慢；请跑 `scripts/bench_tts_speed.py`，或考虑 8k 快模型。
 
 ## 许可
 

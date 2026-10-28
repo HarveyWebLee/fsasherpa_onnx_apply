@@ -12,6 +12,8 @@ from typing import Optional
 
 import numpy as np
 import soundfile as sf
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -24,10 +26,27 @@ STATIC_DIR = ROOT / "static"
 OUTPUT_DIR = ROOT / "outputs"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    # Warm model once at startup so the first user request is not paying load cost.
+    if engine.model_ready():
+        try:
+            info = engine.preload()
+            print(
+                f"[tts] preloaded threads={info.get('num_threads')} "
+                f"provider={info.get('provider')} "
+                f"load={info.get('load_elapsed_seconds'):.2f}s"
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"[tts] preload failed: {exc}")
+    yield
+
+
 app = FastAPI(
     title="sherpa-onnx TTS Demo",
     description="基于 sherpa-onnx + vits-melo-tts-zh_en 的中英 TTS（整段 + 实时流播放）",
-    version="1.1.0",
+    version="1.2.0",
+    lifespan=lifespan,
 )
 
 if STATIC_DIR.is_dir():
@@ -54,13 +73,15 @@ def index() -> FileResponse:
 
 @app.get("/api/health")
 def health():
-    return {
+    payload = {
         "ok": True,
         "model_ready": engine.model_ready(),
         "model_dir": str(engine.model_dir),
         "missing": engine.missing_files() if not engine.model_ready() else [],
         "streaming": True,
     }
+    payload.update(engine.runtime_info())
+    return payload
 
 
 @app.get("/api/status")
@@ -77,6 +98,7 @@ def status():
         "ws_tts": "/ws/tts",
         "http_stream": "/api/tts/stream",
     }
+    info.update(engine.runtime_info())
     if ready:
         try:
             tts = engine.ensure_loaded()

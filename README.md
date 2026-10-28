@@ -145,6 +145,36 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 19658
 
 
 
+
+## 多模型切换（44.1k / 8k）
+
+默认模型 **不会被替换**。注册表：
+
+| model_id | 目录 | 说明 |
+|----------|------|------|
+| `melo-zh-en-44k` | `models/vits-melo-tts-zh_en` | 默认，44.1 kHz，音质优先 |
+| `melo-zh-en-8k` | `models/vits-melo-tts-zh_en-8k` | 更快，8 kHz（需单独下载） |
+
+下载 8k（保留 44.1k）：
+
+```powershell
+.\scripts\download_model_8k.ps1
+```
+
+网页：顶部下拉框切换模型；状态栏显示当前 `model_id` 与采样率。  
+API：`GET /api/models` 列出；`POST /api/models` JSON `{"model_id":"melo-zh-en-8k","warmup":true}` 热切换（重建 OfflineTts + 预热）。  
+请求体也可带 `model_id`（`/api/tts`、`/ws/tts`）。合成总时长面板会标注 model，便于 44.1k vs 8k 对比。
+
+同段固定中文（「你好，欢迎使用本地文本转语音测试。第一句先出声。第二句继续播放。」）本机 CPU / 2 线程实测（CUDA 关）：
+
+| 模型 | 采样率 | 合成耗时 | 音频时长 | RTF |
+|------|--------|----------|----------|-----|
+| `melo-zh-en-44k` | 44100 | **17.765 s** | 5.784 s | 3.071 |
+| `melo-zh-en-8k` | 8000 | **0.293 s** | 5.725 s | 0.051 |
+
+约 **60×** 加速（8k 音质更低，适合预览/对时延敏感场景）。热切换：44k→8k 加载约 7 s；8k→44k 约 3.7 s（含预热）。
+
+
 ## NVIDIA CUDA 加速（可选）
 
 本机 GPU：**GTX 1650 Ti**，驱动 546.33（CUDA 12.3）。已验证可加载 sherpa-onnx **CUDA EP**（`onnxruntime_providers_cuda.dll`），合成时 GPU 利用率可达约 40–45%。

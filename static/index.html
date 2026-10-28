@@ -10,10 +10,17 @@
   <main class="card">
     <header>
       <h1>sherpa-onnx 文本转语音</h1>
-      <p class="sub">模型：vits-melo-tts-zh_en · 支持整段合成与 <strong>实时流播放</strong> · 可切换 CUDA</p>
+      <p class="sub">多模型切换 · CUDA · 整段 / <strong>实时流播放</strong></p>
     </header>
 
     <section class="status" id="statusBox">正在检查模型状态…</section>
+
+    <label class="label" for="modelSelect">TTS 模型</label>
+    <div class="model-row">
+      <select id="modelSelect" class="model-select"></select>
+      <div class="provider-badge" id="modelBadge">model: —</div>
+    </div>
+    <p class="provider-sub" id="modelHint">44.1k 音质优先；8k 更快。切换会热重建引擎并预热。</p>
 
     <div class="provider-row" id="providerRow">
       <div class="provider-text">
@@ -52,7 +59,7 @@
     <section class="timing" id="timingBox" aria-live="polite">
       <div class="timing-label">文本转语音总时长</div>
       <div class="timing-value" id="timingValue">—</div>
-      <div class="timing-detail" id="timingDetail">合成或流播放开始后，这里显示耗时（秒）；可对比 CUDA 开/关</div>
+      <div class="timing-detail" id="timingDetail">合成或流播放开始后显示耗时；可对比模型 / CUDA</div>
     </section>
 
     <div class="player-wrap">
@@ -66,8 +73,8 @@
     </div>
 
     <footer>
-      <p>实时流：WebSocket <code>/ws/tts</code> + Web Audio API。整段：<code>POST /api/tts</code>。Provider：<code>POST /api/provider</code>。</p>
-      <p>基于 <a href="https://github.com/k2-fsa/sherpa-onnx" target="_blank" rel="noreferrer">k2-fsa/sherpa-onnx</a>。英文词需出现在 lexicon.txt 中。</p>
+      <p>模型：<code>GET/POST /api/models</code> · CUDA：<code>POST /api/provider</code> · 流：<code>/ws/tts</code></p>
+      <p>基于 <a href="https://github.com/k2-fsa/sherpa-onnx" target="_blank" rel="noreferrer">k2-fsa/sherpa-onnx</a>。8k 模型目录独立，不替换 44.1k。</p>
     </footer>
   </main>
   <script src="/static/app.js"></script>

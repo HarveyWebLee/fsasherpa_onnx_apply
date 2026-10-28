@@ -29,24 +29,27 @@ OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    # Warm model once at startup so the first user request is not paying load cost.
     if engine.model_ready():
         try:
             info = engine.preload()
             print(
-                f"[tts] preloaded threads={info.get('num_threads')} "
+                f"[tts] preloaded model={info.get('model_id')} "
+                f"threads={info.get('num_threads')} "
                 f"provider={info.get('provider')} "
+                f"sr={info.get('sample_rate')} "
                 f"load={info.get('load_elapsed_seconds'):.2f}s"
             )
         except Exception as exc:  # noqa: BLE001
             print(f"[tts] preload failed: {exc}")
+    else:
+        print(f"[tts] model not ready: {engine.model_id} missing={engine.missing_files()}")
     yield
 
 
 app = FastAPI(
     title="sherpa-onnx TTS Demo",
-    description="基于 sherpa-onnx + vits-melo-tts-zh_en 的中英 TTS（整段 + 实时流播放）",
-    version="1.3.0",
+    description="基于 sherpa-onnx 的中英 TTS（多模型切换 + CUDA + 实时流）",
+    version="1.4.0",
     lifespan=lifespan,
 )
 
@@ -64,12 +67,21 @@ class SynthRequest(BaseModel):
     )
     provider: Optional[str] = Field(
         default=None,
-        description="可选：本次请求前切换到 cpu/cuda（会重建引擎；一般用 /api/provider）",
+        description="可选：本次请求前切换到 cpu/cuda",
+    )
+    model_id: Optional[str] = Field(
+        default=None,
+        description="可选：本次请求前切换模型（如 melo-zh-en-44k / melo-zh-en-8k）",
     )
 
 
 class ProviderRequest(BaseModel):
     provider: str = Field(..., description="cpu 或 cuda")
+    warmup: bool = Field(True, description="切换后是否短句预热")
+
+
+class ModelRequest(BaseModel):
+    model_id: str = Field(..., description="注册表中的模型 id，如 melo-zh-en-8k")
     warmup: bool = Field(True, description="切换后是否短句预热")
 
 
@@ -108,6 +120,8 @@ def status():
         "ws_tts": "/ws/tts",
         "http_stream": "/api/tts/stream",
         "provider_api": "/api/provider",
+        "models_api": "/api/models",
+        "models": engine.list_models(),
     }
     info.update(engine.runtime_info())
     if ready:
@@ -130,40 +144,61 @@ def get_provider():
 
 @app.post("/api/provider")
 def set_provider(req: ProviderRequest):
-    """Hot-switch OfflineTts provider (cpu/cuda). Rebuilds + optional warmup."""
-    if not engine.model_ready():
-        raise HTTPException(
-            status_code=503,
-            detail={
-                "message": "模型未下载。请在项目根目录运行: .\\scripts\\download_model.ps1",
-                "missing": engine.missing_files(),
-            },
-        )
     try:
         result = engine.set_provider(req.provider, warmup=bool(req.warmup))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except TimeoutError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except RuntimeError as exc:
+    except (RuntimeError, FileNotFoundError) as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=f"切换 provider 失败: {exc}") from exc
     return result
 
 
-def _maybe_switch_provider(provider: Optional[str]) -> None:
-    if not provider:
-        return
-    p = str(provider).strip().lower()
-    if not p or p == engine.provider:
-        return
-    engine.set_provider(p, warmup=True)
+@app.get("/api/models")
+def list_models():
+    return {
+        "ok": True,
+        "current": engine.model_id,
+        "models": engine.list_models(),
+        **engine.runtime_info(),
+    }
+
+
+@app.post("/api/models")
+def set_model(req: ModelRequest):
+    """Hot-switch TTS model (rebuild OfflineTts + optional warmup)."""
+    try:
+        result = engine.set_model(req.model_id, warmup=bool(req.warmup))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except TimeoutError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"切换模型失败: {exc}") from exc
+    return result
+
+
+def _maybe_switch(provider: Optional[str], model_id: Optional[str]) -> None:
+    # Apply model first, then provider, so one rebuild each when both change
+    # Prefer single rebuild when both set:
+    if model_id or provider:
+        kwargs = {"warmup": True}
+        if model_id:
+            kwargs["model_id"] = str(model_id).strip()
+        if provider:
+            kwargs["provider"] = str(provider).strip()
+        # use internal rebuild once
+        engine._rebuild(**kwargs)  # noqa: SLF001
 
 
 @app.post("/api/tts")
 def synthesize(req: SynthRequest):
-    if not engine.model_ready():
+    if not engine.model_ready() and not req.model_id:
         raise HTTPException(
             status_code=503,
             detail={
@@ -172,13 +207,13 @@ def synthesize(req: SynthRequest):
             },
         )
     try:
-        _maybe_switch_provider(req.provider)
+        _maybe_switch(req.provider, req.model_id)
         result = engine.synthesize(req.text, sid=req.sid, speed=req.speed)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except TimeoutError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except RuntimeError as exc:
+    except (RuntimeError, FileNotFoundError) as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=f"合成失败: {exc}") from exc
@@ -198,11 +233,12 @@ def synthesize(req: SynthRequest):
         "X-RTF": f"{result.rtf:.3f}",
         "X-Sample-Rate": str(result.sample_rate),
         "X-Provider": engine.provider,
+        "X-Model-Id": engine.model_id,
         "X-Saved-As": out_name,
         "Content-Disposition": f'inline; filename="{out_name}"',
         "Access-Control-Expose-Headers": (
             "X-Audio-Duration, X-Elapsed-Seconds, X-Elapsed-Ms, X-RTF, "
-            "X-Sample-Rate, X-Provider, X-Saved-As"
+            "X-Sample-Rate, X-Provider, X-Model-Id, X-Saved-As"
         ),
     }
     return StreamingResponse(buf, media_type="audio/wav", headers=headers)
@@ -210,11 +246,7 @@ def synthesize(req: SynthRequest):
 
 @app.post("/api/tts/stream")
 def synthesize_http_stream(req: SynthRequest):
-    """HTTP chunked stream of float32 LE PCM.
-
-    First line is a JSON meta header ending with \\n, then raw f32le chunks.
-    """
-    if not engine.model_ready():
+    if not engine.model_ready() and not req.model_id:
         raise HTTPException(
             status_code=503,
             detail={
@@ -224,7 +256,7 @@ def synthesize_http_stream(req: SynthRequest):
         )
 
     try:
-        _maybe_switch_provider(req.provider)
+        _maybe_switch(req.provider, req.model_id)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
@@ -250,26 +282,15 @@ def synthesize_http_stream(req: SynthRequest):
         "X-Stream-Format": "json-meta-line+f32le",
         "X-Channels": "1",
         "X-Provider": engine.provider,
+        "X-Model-Id": engine.model_id,
         "Cache-Control": "no-store",
-        "Access-Control-Expose-Headers": "X-Stream-Format, X-Channels, X-Provider",
+        "Access-Control-Expose-Headers": "X-Stream-Format, X-Channels, X-Provider, X-Model-Id",
     }
     return StreamingResponse(gen(), media_type="application/octet-stream", headers=headers)
 
 
 @app.websocket("/ws/tts")
 async def ws_tts(websocket: WebSocket):
-    """WebSocket streaming TTS.
-
-    Client -> server (text JSON):
-      {"text": "...", "speed": 1.0, "sid": 0, "provider": "cuda"|null}
-
-    Server -> client:
-      text JSON  {"type":"meta",...}
-      binary     float32 little-endian PCM chunk
-      text JSON  {"type":"progress","progress":0.42}
-      text JSON  {"type":"end", ..., "provider":"..."}
-      text JSON  {"type":"error","message":"..."}
-    """
     await websocket.accept()
     cancel = threading.Event()
 
@@ -286,28 +307,36 @@ async def ws_tts(websocket: WebSocket):
         speed = float(req.get("speed", 1.0))
         sid = int(req.get("sid", 0))
         provider = req.get("provider")
+        model_id = req.get("model_id")
         if not text:
             await websocket.send_json({"type": "error", "message": "文本不能为空"})
             await websocket.close()
             return
+
+        if provider or model_id:
+            try:
+                await asyncio.to_thread(
+                    lambda: _maybe_switch(
+                        str(provider) if provider else None,
+                        str(model_id) if model_id else None,
+                    )
+                )
+            except Exception as exc:  # noqa: BLE001
+                await websocket.send_json({"type": "error", "message": f"切换失败: {exc}"})
+                await websocket.close()
+                return
+
         if not engine.model_ready():
             await websocket.send_json(
                 {
                     "type": "error",
-                    "message": "模型未就绪，请先运行 scripts/download_model.ps1",
+                    "message": "模型未就绪，请先下载模型",
                     "missing": engine.missing_files(),
+                    "model_id": engine.model_id,
                 }
             )
             await websocket.close()
             return
-
-        if provider:
-            try:
-                await asyncio.to_thread(lambda: engine.set_provider(str(provider), warmup=True))
-            except Exception as exc:  # noqa: BLE001
-                await websocket.send_json({"type": "error", "message": f"切换 provider 失败: {exc}"})
-                await websocket.close()
-                return
 
         loop = asyncio.get_running_loop()
         event_q: asyncio.Queue = asyncio.Queue(maxsize=128)

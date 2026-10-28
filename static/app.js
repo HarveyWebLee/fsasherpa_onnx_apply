@@ -18,6 +18,9 @@ const modes = document.querySelectorAll(".mode");
 const cudaToggle = document.getElementById("cudaToggle");
 const providerBadge = document.getElementById("providerBadge");
 const providerHint = document.getElementById("providerHint");
+const modelSelect = document.getElementById("modelSelect");
+const modelBadge = document.getElementById("modelBadge");
+const modelHint = document.getElementById("modelHint");
 
 let currentMode = "mixed";
 let objectUrl = null;
@@ -29,8 +32,12 @@ let receivedSamples = 0;
 let streaming = false;
 const recordedChunks = [];
 let currentProvider = "cpu";
+let currentModelId = "melo-zh-en-44k";
+let currentSampleRate = null;
 let cudaAvailable = false;
 let switchingProvider = false;
+let switchingModel = false;
+let modelsCache = [];
 
 let timingTimer = null;
 let timingStartedAt = 0;
@@ -56,11 +63,17 @@ modes.forEach((btn) => {
   });
 });
 
+function uiLocked() {
+  return switchingProvider || switchingModel || streaming;
+}
+
 function setBusy(isBusy) {
-  streamBtn.disabled = isBusy || switchingProvider;
-  synthBtn.disabled = isBusy || switchingProvider;
+  const lock = isBusy || switchingProvider || switchingModel;
+  streamBtn.disabled = lock;
+  synthBtn.disabled = lock;
   stopBtn.disabled = !isBusy;
-  cudaToggle.disabled = isBusy || switchingProvider || !cudaAvailable;
+  cudaToggle.disabled = lock || !cudaAvailable;
+  modelSelect.disabled = lock;
 }
 
 function formatSeconds(sec) {
@@ -81,12 +94,13 @@ function startTiming(modeLabel) {
   timingStartedAt = performance.now();
   timingBox.className = "timing running";
   timingValue.textContent = "0.000 s";
-  timingDetail.textContent = `${modeLabel}进行中…（本地计时 · provider=${currentProvider}）`;
+  timingDetail.textContent =
+    `${modeLabel}进行中…（本地计时 · model=${currentModelId} · provider=${currentProvider}）`;
   timingTimer = setInterval(() => {
     const elapsed = (performance.now() - timingStartedAt) / 1000;
     timingValue.textContent = formatSeconds(elapsed);
     timingDetail.textContent =
-      `${modeLabel}进行中… 已用 ${formatSeconds(elapsed)} · provider=${currentProvider}`;
+      `${modeLabel}进行中… 已用 ${formatSeconds(elapsed)} · model=${currentModelId} · provider=${currentProvider}`;
   }, 50);
 }
 
@@ -108,9 +122,12 @@ function finishTiming(opts) {
   timingValue.textContent = formatSeconds(displaySec);
 
   const provider = opts.provider || currentProvider;
+  const modelId = opts.modelId || currentModelId;
   const parts = [];
   parts.push(`${opts.modeLabel || timingMode || "合成"}完成`);
+  parts.push(`model=${modelId}`);
   parts.push(`provider=${provider}`);
+  if (opts.sampleRate != null) parts.push(`${opts.sampleRate} Hz`);
   if (serverSec != null) {
     parts.push(`服务端 ${formatSeconds(serverSec)}`);
     if (serverMs != null) parts.push(`(${serverMs.toFixed(1)} ms)`);
@@ -127,11 +144,43 @@ function finishTiming(opts) {
   return { localSec, serverSec, displaySec };
 }
 
+function fillModelSelect(models, activeId) {
+  modelsCache = models || [];
+  const prev = modelSelect.value;
+  modelSelect.innerHTML = "";
+  modelsCache.forEach((m) => {
+    const opt = document.createElement("option");
+    opt.value = m.id;
+    const sr = m.expected_sample_rate ? `${m.expected_sample_rate}Hz` : "?Hz";
+    opt.textContent = `${m.name} (${sr})${m.ready ? "" : " — 未下载"}`;
+    opt.disabled = !m.ready;
+    if (m.id === activeId) opt.selected = true;
+    modelSelect.appendChild(opt);
+  });
+  if (!modelSelect.value && prev) modelSelect.value = prev;
+}
+
+function updateModelUi(data) {
+  if (data.model_id) currentModelId = data.model_id;
+  if (data.sample_rate != null) currentSampleRate = data.sample_rate;
+  if (Array.isArray(data.models)) fillModelSelect(data.models, currentModelId);
+  modelSelect.value = currentModelId;
+  const sr = currentSampleRate != null ? `${currentSampleRate} Hz` : "—";
+  modelBadge.textContent = `model: ${currentModelId} · ${sr}`;
+  modelBadge.className = "provider-badge" + (switchingModel ? " busy" : "");
+  const active = (data.models || modelsCache).find((m) => m.id === currentModelId);
+  if (switchingModel) {
+    modelHint.textContent = "正在切换模型并重建 OfflineTts / 预热…";
+  } else if (active) {
+    modelHint.textContent = `${active.description} · 目录 ${active.dir}`;
+  }
+}
+
 function updateProviderUi(data) {
   currentProvider = (data && data.provider) || currentProvider || "cpu";
   cudaAvailable = !!(data && data.cuda_available);
   cudaToggle.checked = currentProvider === "cuda";
-  cudaToggle.disabled = switchingProvider || streaming || !cudaAvailable;
+  cudaToggle.disabled = uiLocked() || !cudaAvailable;
   providerBadge.textContent = `provider: ${currentProvider}`;
   providerBadge.className =
     "provider-badge" +
@@ -144,7 +193,7 @@ function updateProviderUi(data) {
     providerHint.textContent = "正在切换并重建 OfflineTts / 预热，请稍候…";
   } else {
     providerHint.textContent =
-      "关闭 = CPU；开启 = CUDA。切换会热重建引擎并预热，合成总时长仍显示在下方便于对比。";
+      "关闭 = CPU；开启 = CUDA。切换会热重建引擎并预热。";
   }
 }
 
@@ -163,7 +212,6 @@ async function switchProvider(wantCuda) {
   setBusy(false);
   updateProviderUi({ provider: currentProvider, cuda_available: cudaAvailable });
   errorEl.textContent = "";
-  meta.textContent = "";
   startTiming(`切换 provider → ${target}`);
   try {
     const res = await fetch("/api/provider", {
@@ -182,14 +230,16 @@ async function switchProvider(wantCuda) {
       throw new Error(detail);
     }
     currentProvider = data.provider || target;
+    if (data.sample_rate != null) currentSampleRate = data.sample_rate;
     finishTiming({
       modeLabel: data.changed ? "Provider 切换" : "Provider 未变",
       serverSeconds: (data.load_elapsed_seconds || 0) + (data.warmup_elapsed_seconds || 0),
       provider: currentProvider,
+      modelId: data.model_id || currentModelId,
+      sampleRate: data.sample_rate,
       extra:
         `load ${Number(data.load_elapsed_seconds || 0).toFixed(3)}s` +
-        ` · warmup ${Number(data.warmup_elapsed_seconds || 0).toFixed(3)}s` +
-        (data.message ? ` · ${data.message}` : ""),
+        ` · warmup ${Number(data.warmup_elapsed_seconds || 0).toFixed(3)}s`,
     });
     await refreshStatus();
   } catch (err) {
@@ -204,8 +254,73 @@ async function switchProvider(wantCuda) {
   }
 }
 
+async function switchModel(modelId) {
+  if (!modelId || modelId === currentModelId) {
+    modelSelect.value = currentModelId;
+    return;
+  }
+  if (streaming) {
+    errorEl.textContent = "请先停止当前流播放再切换模型";
+    modelSelect.value = currentModelId;
+    return;
+  }
+  switchingModel = true;
+  setBusy(false);
+  updateModelUi({ model_id: currentModelId, sample_rate: currentSampleRate, models: modelsCache });
+  errorEl.textContent = "";
+  startTiming(`切换模型 → ${modelId}`);
+  try {
+    const res = await fetch("/api/models", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model_id: modelId, warmup: true }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const detail =
+        typeof data.detail === "string"
+          ? data.detail
+          : data.detail
+            ? JSON.stringify(data.detail)
+            : `HTTP ${res.status}`;
+      throw new Error(detail);
+    }
+    currentModelId = data.model_id || modelId;
+    if (data.sample_rate != null) currentSampleRate = data.sample_rate;
+    // WebAudio context is sample-rate specific — reset on model change
+    if (audioCtx) {
+      try { await audioCtx.close(); } catch (_) {}
+      audioCtx = null;
+    }
+    finishTiming({
+      modeLabel: data.changed ? "模型切换" : "模型未变",
+      serverSeconds: (data.load_elapsed_seconds || 0) + (data.warmup_elapsed_seconds || 0),
+      provider: data.provider || currentProvider,
+      modelId: currentModelId,
+      sampleRate: data.sample_rate,
+      extra:
+        `load ${Number(data.load_elapsed_seconds || 0).toFixed(3)}s` +
+        ` · warmup ${Number(data.warmup_elapsed_seconds || 0).toFixed(3)}s` +
+        (data.message ? ` · ${data.message}` : ""),
+    });
+    await refreshStatus();
+  } catch (err) {
+    errorEl.textContent = String(err.message || err);
+    finishTiming({ modeLabel: "模型切换（失败）", modelId: currentModelId });
+    modelSelect.value = currentModelId;
+    await refreshStatus();
+  } finally {
+    switchingModel = false;
+    setBusy(streaming);
+    updateModelUi({ model_id: currentModelId, sample_rate: currentSampleRate, models: modelsCache });
+  }
+}
+
 cudaToggle.addEventListener("change", () => {
   switchProvider(cudaToggle.checked);
+});
+modelSelect.addEventListener("change", () => {
+  switchModel(modelSelect.value);
 });
 
 async function refreshStatus() {
@@ -213,25 +328,28 @@ async function refreshStatus() {
     const res = await fetch("/api/status");
     const data = await res.json();
     updateProviderUi(data);
+    updateModelUi(data);
     if (data.model_ready) {
       statusBox.className = "status ok";
       statusBox.textContent =
-        `模型已就绪\n目录: ${data.model_dir}\n采样率: ${data.sample_rate || "-"} Hz\n` +
-        `流式: WebSocket ${data.ws_tts || "/ws/tts"}\n` +
-        `线程: ${data.num_threads || "-"} · provider: ${data.provider || "cpu"}` +
-        `\nCUDA 运行时: ${data.cuda_available ? "可用" : "不可用"}` +
+        `模型已就绪\n` +
+        `当前: ${data.model_name || data.model_id} (${data.model_id})\n` +
+        `目录: ${data.model_dir}\n` +
+        `采样率: ${data.sample_rate || "-"} Hz\n` +
+        `线程: ${data.num_threads || "-"} · provider: ${data.provider || "cpu"}\n` +
+        `CUDA 运行时: ${data.cuda_available ? "可用" : "不可用"}` +
         (data.busy ? "\n状态: 合成进行中" : "");
-      if (!switchingProvider && !streaming) {
+      if (!uiLocked()) {
         streamBtn.disabled = false;
         synthBtn.disabled = false;
       }
     } else {
       statusBox.className = "status bad";
       statusBox.textContent =
-        `模型未就绪。请运行 scripts/download_model.ps1\n缺失: ${(data.missing || []).join(", ") || "未知"}`;
+        `当前模型未就绪 (${data.model_id || "-"})\n` +
+        `请运行对应下载脚本\n缺失: ${(data.missing || []).join(", ") || "未知"}`;
       streamBtn.disabled = true;
       synthBtn.disabled = true;
-      cudaToggle.disabled = true;
     }
   } catch (err) {
     statusBox.className = "status bad";
@@ -239,6 +357,7 @@ async function refreshStatus() {
     streamBtn.disabled = true;
     synthBtn.disabled = true;
     cudaToggle.disabled = true;
+    modelSelect.disabled = true;
   }
 }
 
@@ -315,9 +434,7 @@ function stopStreaming(reason) {
     ws = null;
   }
   setBusy(false);
-  if (reason) {
-    streamMeta.textContent = reason;
-  }
+  if (reason) streamMeta.textContent = reason;
 }
 
 streamBtn.addEventListener("click", async () => {
@@ -343,7 +460,7 @@ streamBtn.addEventListener("click", async () => {
   ws.binaryType = "arraybuffer";
 
   ws.onopen = () => {
-    streamMeta.textContent = `流播放：合成中（${currentProvider}）…`;
+    streamMeta.textContent = `流播放：合成中（${currentModelId} / ${currentProvider}）…`;
     startTiming("实时流播放");
     ws.send(
       JSON.stringify({
@@ -358,27 +475,27 @@ streamBtn.addEventListener("click", async () => {
   ws.onmessage = (ev) => {
     if (typeof ev.data === "string") {
       let msg;
-      try {
-        msg = JSON.parse(ev.data);
-      } catch (_) {
-        return;
-      }
+      try { msg = JSON.parse(ev.data); } catch (_) { return; }
       if (msg.type === "meta") {
         if (msg.provider) currentProvider = msg.provider;
+        if (msg.model_id) currentModelId = msg.model_id;
+        if (msg.sample_rate) currentSampleRate = msg.sample_rate;
         updateProviderUi({ provider: currentProvider, cuda_available: cudaAvailable });
+        updateModelUi({ model_id: currentModelId, sample_rate: currentSampleRate, models: modelsCache });
         ensureAudioContext(msg.sample_rate || 44100);
         streamMeta.textContent =
-          `流播放：已开始（${msg.sample_rate} Hz, ${msg.format || "f32le"}, provider=${msg.provider || currentProvider}）`;
+          `流播放：已开始（${msg.sample_rate} Hz, model=${msg.model_id || currentModelId}, provider=${msg.provider || currentProvider}）`;
       } else if (msg.type === "progress") {
         const p = Math.max(0, Math.min(1, Number(msg.progress) || 0));
         progressBar.style.width = `${(p * 100).toFixed(1)}%`;
         const localSec = (performance.now() - timingStartedAt) / 1000;
         streamMeta.textContent =
-          `流播放：进度 ${(p * 100).toFixed(0)}% · 已用 ${formatSeconds(localSec)} · 已收 ${receivedSamples} samples · ${currentProvider}`;
+          `流播放：进度 ${(p * 100).toFixed(0)}% · 已用 ${formatSeconds(localSec)} · ${currentModelId}`;
       } else if (msg.type === "end") {
         progressBar.style.width = "100%";
         const dur = receivedSamples / (streamSampleRate || 1);
         if (msg.provider) currentProvider = msg.provider;
+        if (msg.model_id) currentModelId = msg.model_id;
         const timing = finishTiming({
           modeLabel: "实时流播放",
           serverSeconds: msg.elapsed_seconds,
@@ -386,9 +503,11 @@ streamBtn.addEventListener("click", async () => {
           audioDuration: msg.audio_duration != null ? msg.audio_duration : dur,
           rtf: msg.rtf,
           provider: msg.provider || currentProvider,
+          modelId: msg.model_id || currentModelId,
+          sampleRate: msg.sample_rate || currentSampleRate,
         });
         streamMeta.textContent =
-          `流播放完成 · provider=${msg.provider || currentProvider} · 音频约 ${dur.toFixed(2)}s · ` +
+          `流播放完成 · ${msg.model_id || currentModelId} · ${msg.sample_rate || currentSampleRate}Hz · ` +
           `总时长 ${formatSeconds(timing.displaySec)} · RTF ${(msg.rtf || 0).toFixed(3)}`;
         if (recordedChunks.length) {
           const blob = floatChunksToWavBlob(recordedChunks, streamSampleRate);
@@ -402,25 +521,23 @@ streamBtn.addEventListener("click", async () => {
         stopStreaming(streamMeta.textContent);
       } else if (msg.type === "error") {
         errorEl.textContent = msg.message || "流式合成失败";
-        finishTiming({ modeLabel: "实时流播放（失败）", provider: currentProvider });
+        finishTiming({ modeLabel: "实时流播放（失败）" });
         stopStreaming("流播放失败");
       }
       return;
     }
-
-    const f32 = new Float32Array(ev.data);
-    scheduleChunk(f32);
+    scheduleChunk(new Float32Array(ev.data));
   };
 
   ws.onerror = () => {
     errorEl.textContent = "WebSocket 错误";
-    finishTiming({ modeLabel: "实时流播放（出错）", provider: currentProvider });
+    finishTiming({ modeLabel: "实时流播放（出错）" });
     stopStreaming("流播放出错");
   };
 
   ws.onclose = () => {
     if (streaming) {
-      finishTiming({ modeLabel: "实时流播放（中断）", provider: currentProvider });
+      finishTiming({ modeLabel: "实时流播放（中断）" });
       stopStreaming(streamMeta.textContent || "连接已关闭");
     }
   };
@@ -430,7 +547,6 @@ stopBtn.addEventListener("click", () => {
   const localSec = timingStartedAt ? (performance.now() - timingStartedAt) / 1000 : 0;
   finishTiming({
     modeLabel: "已停止",
-    provider: currentProvider,
     extra: `停止时已用 ${formatSeconds(localSec)}`,
   });
   stopStreaming("已停止");
@@ -484,8 +600,13 @@ synthBtn.addEventListener("click", async () => {
     const audioDur = parseFloat(res.headers.get("X-Audio-Duration") || "");
     const rtf = parseFloat(res.headers.get("X-RTF") || "");
     const providerHdr = res.headers.get("X-Provider") || currentProvider;
+    const modelHdr = res.headers.get("X-Model-Id") || currentModelId;
+    const srHdr = parseInt(res.headers.get("X-Sample-Rate") || "", 10);
     currentProvider = providerHdr;
+    currentModelId = modelHdr;
+    if (Number.isFinite(srHdr)) currentSampleRate = srHdr;
     updateProviderUi({ provider: currentProvider, cuda_available: cudaAvailable });
+    updateModelUi({ model_id: currentModelId, sample_rate: currentSampleRate, models: modelsCache });
     const timing = finishTiming({
       modeLabel: "整段合成",
       serverSeconds: Number.isFinite(serverSec) ? serverSec : null,
@@ -493,15 +614,16 @@ synthBtn.addEventListener("click", async () => {
       audioDuration: Number.isFinite(audioDur) ? audioDur : null,
       rtf: Number.isFinite(rtf) ? rtf : null,
       provider: providerHdr,
+      modelId: modelHdr,
+      sampleRate: Number.isFinite(srHdr) ? srHdr : currentSampleRate,
     });
     meta.textContent =
-      `整段 · provider=${providerHdr} · 音频 ${Number.isFinite(audioDur) ? audioDur.toFixed(3) : "-"}s · ` +
-      `总时长 ${formatSeconds(timing.displaySec)} · ` +
-      `RTF ${Number.isFinite(rtf) ? rtf.toFixed(3) : "-"} · ` +
-      `${res.headers.get("X-Sample-Rate") || "-"} Hz`;
+      `整段 · ${modelHdr} · ${Number.isFinite(srHdr) ? srHdr : "-"}Hz · provider=${providerHdr} · ` +
+      `音频 ${Number.isFinite(audioDur) ? audioDur.toFixed(3) : "-"}s · ` +
+      `总时长 ${formatSeconds(timing.displaySec)} · RTF ${Number.isFinite(rtf) ? rtf.toFixed(3) : "-"}`;
   } catch (err) {
     errorEl.textContent = String(err.message || err);
-    finishTiming({ modeLabel: "整段合成（失败）", provider: currentProvider });
+    finishTiming({ modeLabel: "整段合成（失败）" });
   } finally {
     setBusy(false);
     synthBtn.textContent = "整段合成下载";

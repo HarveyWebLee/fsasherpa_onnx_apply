@@ -213,3 +213,23 @@ footer code { color: #7dd3fc; }
   cursor: not-allowed;
 }
 
+.model-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+.model-select {
+  flex: 1;
+  min-width: 220px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: #0b1220;
+  color: var(--text);
+  padding: 10px 12px;
+  font-size: 0.95rem;
+}
+.model-select:disabled { opacity: 0.45; }
+.model-select option:disabled { color: #6b7280; }
+

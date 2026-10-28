@@ -116,10 +116,15 @@ def synthesize(req: SynthRequest):
     headers = {
         "X-Audio-Duration": f"{result.audio_duration:.3f}",
         "X-Elapsed-Seconds": f"{result.elapsed_seconds:.3f}",
+        "X-Elapsed-Ms": f"{result.elapsed_seconds * 1000.0:.1f}",
         "X-RTF": f"{result.rtf:.3f}",
         "X-Sample-Rate": str(result.sample_rate),
         "X-Saved-As": out_name,
         "Content-Disposition": f'inline; filename="{out_name}"',
+        "Access-Control-Expose-Headers": (
+            "X-Audio-Duration, X-Elapsed-Seconds, X-Elapsed-Ms, X-RTF, "
+            "X-Sample-Rate, X-Saved-As"
+        ),
     }
     return StreamingResponse(buf, media_type="audio/wav", headers=headers)
 

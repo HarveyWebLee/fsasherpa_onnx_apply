@@ -208,6 +208,7 @@ class TtsEngine:
                 duration = float(len(samples) / sample_rate) if sample_rate else 0.0
                 result_box["end"] = {
                     "elapsed_seconds": elapsed,
+                    "elapsed_ms": round(elapsed * 1000.0, 1),
                     "audio_duration": duration,
                     "num_samples": int(len(samples)),
                     "sample_rate": sample_rate,

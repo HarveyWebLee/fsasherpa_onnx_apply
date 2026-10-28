@@ -11,6 +11,9 @@ const progressBar = document.getElementById("progressBar");
 const errorEl = document.getElementById("error");
 const statusBox = document.getElementById("statusBox");
 const downloadLink = document.getElementById("downloadLink");
+const timingBox = document.getElementById("timingBox");
+const timingValue = document.getElementById("timingValue");
+const timingDetail = document.getElementById("timingDetail");
 const modes = document.querySelectorAll(".mode");
 
 let currentMode = "mixed";
@@ -22,6 +25,10 @@ let streamSampleRate = 44100;
 let receivedSamples = 0;
 let streaming = false;
 const recordedChunks = [];
+
+let timingTimer = null;
+let timingStartedAt = 0;
+let timingMode = "";
 
 const defaults = {
   zh: "你好，欢迎使用本地文本转语音测试。第一句先出声。第二句继续播放。",
@@ -47,6 +54,74 @@ function setBusy(isBusy) {
   streamBtn.disabled = isBusy;
   synthBtn.disabled = isBusy;
   stopBtn.disabled = !isBusy;
+}
+
+function formatSeconds(sec) {
+  if (!Number.isFinite(sec) || sec < 0) return "—";
+  return `${sec.toFixed(3)} s`;
+}
+
+function clearTimingTicker() {
+  if (timingTimer) {
+    clearInterval(timingTimer);
+    timingTimer = null;
+  }
+}
+
+function startTiming(modeLabel) {
+  clearTimingTicker();
+  timingMode = modeLabel;
+  timingStartedAt = performance.now();
+  timingBox.className = "timing running";
+  timingValue.textContent = "0.000 s";
+  timingDetail.textContent = `${modeLabel}进行中…（本地计时）`;
+  timingTimer = setInterval(() => {
+    const elapsed = (performance.now() - timingStartedAt) / 1000;
+    timingValue.textContent = formatSeconds(elapsed);
+    timingDetail.textContent = `${modeLabel}进行中… 已用 ${formatSeconds(elapsed)}`;
+  }, 50);
+}
+
+function finishTiming(opts) {
+  clearTimingTicker();
+  const localSec = (performance.now() - timingStartedAt) / 1000;
+  const serverSec =
+    opts.serverSeconds != null && Number.isFinite(Number(opts.serverSeconds))
+      ? Number(opts.serverSeconds)
+      : null;
+  const serverMs =
+    opts.serverMs != null && Number.isFinite(Number(opts.serverMs))
+      ? Number(opts.serverMs)
+      : serverSec != null
+        ? serverSec * 1000
+        : null;
+  const displaySec = serverSec != null ? serverSec : localSec;
+  timingBox.className = "timing done";
+  timingValue.textContent = formatSeconds(displaySec);
+
+  const parts = [];
+  parts.push(`${opts.modeLabel || timingMode || "合成"}完成`);
+  if (serverSec != null) {
+    parts.push(`服务端 ${formatSeconds(serverSec)}`);
+    if (serverMs != null) parts.push(`(${serverMs.toFixed(1)} ms)`);
+  }
+  parts.push(`本地计时 ${formatSeconds(localSec)}`);
+  if (opts.audioDuration != null && Number.isFinite(Number(opts.audioDuration))) {
+    parts.push(`音频时长 ${Number(opts.audioDuration).toFixed(3)} s`);
+  }
+  if (opts.rtf != null && Number.isFinite(Number(opts.rtf))) {
+    parts.push(`RTF ${Number(opts.rtf).toFixed(3)}`);
+  }
+  if (opts.extra) parts.push(opts.extra);
+  timingDetail.textContent = parts.join(" · ");
+  return { localSec, serverSec, displaySec };
+}
+
+function resetTimingIdle(msg) {
+  clearTimingTicker();
+  timingBox.className = "timing";
+  timingValue.textContent = "—";
+  timingDetail.textContent = msg || "合成或流播放开始后，这里显示耗时（秒）";
 }
 
 async function refreshStatus() {
@@ -94,7 +169,6 @@ function scheduleChunk(float32) {
   if (!audioCtx || !float32 || float32.length === 0) return;
   recordedChunks.push(float32);
   const buffer = audioCtx.createBuffer(1, float32.length, streamSampleRate);
-  // copyToChannel needs a plain Float32Array
   const channel = buffer.getChannelData(0);
   channel.set(float32);
   const src = audioCtx.createBufferSource();
@@ -170,6 +244,7 @@ streamBtn.addEventListener("click", async () => {
   streaming = true;
   setBusy(true);
   streamMeta.textContent = "流播放：连接中…";
+  startTiming("实时流播放");
 
   const proto = location.protocol === "https:" ? "wss" : "ws";
   ws = new WebSocket(`${proto}://${location.host}/ws/tts`);
@@ -177,6 +252,8 @@ streamBtn.addEventListener("click", async () => {
 
   ws.onopen = () => {
     streamMeta.textContent = "流播放：合成中，边收边播…";
+    // restart clock at request send for closer match to server elapsed
+    startTiming("实时流播放");
     ws.send(
       JSON.stringify({
         text,
@@ -201,12 +278,22 @@ streamBtn.addEventListener("click", async () => {
       } else if (msg.type === "progress") {
         const p = Math.max(0, Math.min(1, Number(msg.progress) || 0));
         progressBar.style.width = `${(p * 100).toFixed(1)}%`;
-        streamMeta.textContent = `流播放：进度 ${(p * 100).toFixed(0)}% · 已收 ${receivedSamples} samples`;
+        const localSec = (performance.now() - timingStartedAt) / 1000;
+        streamMeta.textContent =
+          `流播放：进度 ${(p * 100).toFixed(0)}% · 已用 ${formatSeconds(localSec)} · 已收 ${receivedSamples} samples`;
       } else if (msg.type === "end") {
         progressBar.style.width = "100%";
         const dur = receivedSamples / (streamSampleRate || 1);
+        const timing = finishTiming({
+          modeLabel: "实时流播放",
+          serverSeconds: msg.elapsed_seconds,
+          serverMs: msg.elapsed_ms,
+          audioDuration: msg.audio_duration != null ? msg.audio_duration : dur,
+          rtf: msg.rtf,
+        });
         streamMeta.textContent =
-          `流播放完成 · 时长约 ${dur.toFixed(2)}s · 耗时 ${(msg.elapsed_seconds || 0).toFixed(2)}s · RTF ${(msg.rtf || 0).toFixed(3)}`;
+          `流播放完成 · 音频约 ${dur.toFixed(2)}s · ` +
+          `总时长 ${formatSeconds(timing.displaySec)} · RTF ${(msg.rtf || 0).toFixed(3)}`;
         if (recordedChunks.length) {
           const blob = floatChunksToWavBlob(recordedChunks, streamSampleRate);
           if (objectUrl) URL.revokeObjectURL(objectUrl);
@@ -219,29 +306,36 @@ streamBtn.addEventListener("click", async () => {
         stopStreaming(streamMeta.textContent);
       } else if (msg.type === "error") {
         errorEl.textContent = msg.message || "流式合成失败";
+        finishTiming({ modeLabel: "实时流播放（失败）" });
         stopStreaming("流播放失败");
       }
       return;
     }
 
-    // binary PCM float32 LE
     const f32 = new Float32Array(ev.data);
     scheduleChunk(f32);
   };
 
   ws.onerror = () => {
     errorEl.textContent = "WebSocket 错误";
+    finishTiming({ modeLabel: "实时流播放（出错）" });
     stopStreaming("流播放出错");
   };
 
   ws.onclose = () => {
     if (streaming) {
+      finishTiming({ modeLabel: "实时流播放（中断）" });
       stopStreaming(streamMeta.textContent || "连接已关闭");
     }
   };
 });
 
 stopBtn.addEventListener("click", () => {
+  const localSec = timingStartedAt ? (performance.now() - timingStartedAt) / 1000 : 0;
+  finishTiming({
+    modeLabel: "已停止",
+    extra: `停止时已用 ${formatSeconds(localSec)}`,
+  });
   stopStreaming("已停止");
   if (audioCtx) {
     try { audioCtx.close(); } catch (_) {}
@@ -259,6 +353,7 @@ synthBtn.addEventListener("click", async () => {
   }
   setBusy(true);
   synthBtn.textContent = "合成中…";
+  startTiming("整段合成");
   try {
     const res = await fetch("/api/tts", {
       method: "POST",
@@ -286,13 +381,26 @@ synthBtn.addEventListener("click", async () => {
     downloadLink.href = objectUrl;
     downloadLink.download = res.headers.get("X-Saved-As") || "tts.wav";
     downloadLink.classList.remove("disabled");
+
+    const serverSec = parseFloat(res.headers.get("X-Elapsed-Seconds") || "");
+    const serverMs = parseFloat(res.headers.get("X-Elapsed-Ms") || "");
+    const audioDur = parseFloat(res.headers.get("X-Audio-Duration") || "");
+    const rtf = parseFloat(res.headers.get("X-RTF") || "");
+    const timing = finishTiming({
+      modeLabel: "整段合成",
+      serverSeconds: Number.isFinite(serverSec) ? serverSec : null,
+      serverMs: Number.isFinite(serverMs) ? serverMs : null,
+      audioDuration: Number.isFinite(audioDur) ? audioDur : null,
+      rtf: Number.isFinite(rtf) ? rtf : null,
+    });
     meta.textContent =
-      `整段 · 时长 ${res.headers.get("X-Audio-Duration") || "-"}s · ` +
-      `耗时 ${res.headers.get("X-Elapsed-Seconds") || "-"}s · ` +
-      `RTF ${res.headers.get("X-RTF") || "-"} · ` +
+      `整段 · 音频 ${Number.isFinite(audioDur) ? audioDur.toFixed(3) : "-"}s · ` +
+      `总时长 ${formatSeconds(timing.displaySec)} · ` +
+      `RTF ${Number.isFinite(rtf) ? rtf.toFixed(3) : "-"} · ` +
       `${res.headers.get("X-Sample-Rate") || "-"} Hz`;
   } catch (err) {
     errorEl.textContent = String(err.message || err);
+    finishTiming({ modeLabel: "整段合成（失败）" });
   } finally {
     setBusy(false);
     synthBtn.textContent = "整段合成下载";

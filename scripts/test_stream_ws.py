@@ -15,7 +15,7 @@ sys.path.insert(0, str(ROOT))
 
 async def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--url", default="ws://127.0.0.1:9658/ws/tts")
+    parser.add_argument("--url", default="ws://127.0.0.1:19658/ws/tts")
     parser.add_argument(
         "--text",
         default="你好。这是流式测试。Hello streaming speech.",

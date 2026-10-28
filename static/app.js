@@ -37,6 +37,9 @@ let currentSampleRate = null;
 let cudaAvailable = false;
 let switchingProvider = false;
 let switchingModel = false;
+/** Ignore programmatic checkbox/select updates so they never call switch* / synth. */
+let suppressProviderChange = false;
+let suppressModelChange = false;
 let modelsCache = [];
 
 let timingTimer = null;
@@ -147,24 +150,34 @@ function finishTiming(opts) {
 function fillModelSelect(models, activeId) {
   modelsCache = models || [];
   const prev = modelSelect.value;
-  modelSelect.innerHTML = "";
-  modelsCache.forEach((m) => {
-    const opt = document.createElement("option");
-    opt.value = m.id;
-    const sr = m.expected_sample_rate ? `${m.expected_sample_rate}Hz` : "?Hz";
-    opt.textContent = `${m.name} (${sr})${m.ready ? "" : " — 未下载"}`;
-    opt.disabled = !m.ready;
-    if (m.id === activeId) opt.selected = true;
-    modelSelect.appendChild(opt);
-  });
-  if (!modelSelect.value && prev) modelSelect.value = prev;
+  suppressModelChange = true;
+  try {
+    modelSelect.innerHTML = "";
+    modelsCache.forEach((m) => {
+      const opt = document.createElement("option");
+      opt.value = m.id;
+      const sr = m.expected_sample_rate ? `${m.expected_sample_rate}Hz` : "?Hz";
+      opt.textContent = `${m.name} (${sr})${m.ready ? "" : " — 未下载"}`;
+      opt.disabled = !m.ready;
+      if (m.id === activeId) opt.selected = true;
+      modelSelect.appendChild(opt);
+    });
+    if (!modelSelect.value && prev) modelSelect.value = prev;
+  } finally {
+    suppressModelChange = false;
+  }
 }
 
 function updateModelUi(data) {
   if (data.model_id) currentModelId = data.model_id;
   if (data.sample_rate != null) currentSampleRate = data.sample_rate;
   if (Array.isArray(data.models)) fillModelSelect(data.models, currentModelId);
-  modelSelect.value = currentModelId;
+  suppressModelChange = true;
+  try {
+    modelSelect.value = currentModelId;
+  } finally {
+    suppressModelChange = false;
+  }
   const sr = currentSampleRate != null ? `${currentSampleRate} Hz` : "—";
   modelBadge.textContent = `model: ${currentModelId} · ${sr}`;
   modelBadge.className = "provider-badge" + (switchingModel ? " busy" : "");
@@ -179,7 +192,12 @@ function updateModelUi(data) {
 function updateProviderUi(data) {
   currentProvider = (data && data.provider) || currentProvider || "cpu";
   cudaAvailable = !!(data && data.cuda_available);
-  cudaToggle.checked = currentProvider === "cuda";
+  suppressProviderChange = true;
+  try {
+    cudaToggle.checked = currentProvider === "cuda";
+  } finally {
+    suppressProviderChange = false;
+  }
   cudaToggle.disabled = uiLocked() || !cudaAvailable;
   providerBadge.textContent = `provider: ${currentProvider}`;
   providerBadge.className =
@@ -193,7 +211,7 @@ function updateProviderUi(data) {
     providerHint.textContent = "正在切换并重建 OfflineTts / 预热，请稍候…";
   } else {
     providerHint.textContent =
-      "关闭 = CPU；开启 = CUDA。切换会热重建引擎并预热。";
+      "关闭 = CPU；开启 = CUDA。切换只热重建引擎并预热，不会自动开始合成。";
   }
 }
 
@@ -205,14 +223,20 @@ async function switchProvider(wantCuda) {
   }
   if (streaming) {
     errorEl.textContent = "请先停止当前流播放再切换 CUDA";
-    cudaToggle.checked = currentProvider === "cuda";
+    suppressProviderChange = true;
+    try {
+      cudaToggle.checked = currentProvider === "cuda";
+    } finally {
+      suppressProviderChange = false;
+    }
     return;
   }
+  // Provider switch: rebuild + warmup ONLY. Do not start stream/synth or touch TTS timing panel.
   switchingProvider = true;
   setBusy(false);
   updateProviderUi({ provider: currentProvider, cuda_available: cudaAvailable });
   errorEl.textContent = "";
-  startTiming(`切换 provider → ${target}`);
+  providerHint.textContent = `正在切换 provider → ${target}（仅重建引擎+预热，不会开始合成）…`;
   try {
     const res = await fetch("/api/provider", {
       method: "POST",
@@ -231,21 +255,22 @@ async function switchProvider(wantCuda) {
     }
     currentProvider = data.provider || target;
     if (data.sample_rate != null) currentSampleRate = data.sample_rate;
-    finishTiming({
-      modeLabel: data.changed ? "Provider 切换" : "Provider 未变",
-      serverSeconds: (data.load_elapsed_seconds || 0) + (data.warmup_elapsed_seconds || 0),
-      provider: currentProvider,
-      modelId: data.model_id || currentModelId,
-      sampleRate: data.sample_rate,
-      extra:
-        `load ${Number(data.load_elapsed_seconds || 0).toFixed(3)}s` +
-        ` · warmup ${Number(data.warmup_elapsed_seconds || 0).toFixed(3)}s`,
-    });
+    const load = Number(data.load_elapsed_seconds || 0);
+    const warm = Number(data.warmup_elapsed_seconds || 0);
+    providerHint.textContent =
+      `已切换到 ${currentProvider}` +
+      (data.changed === false ? "（未变）" : "") +
+      ` · load ${load.toFixed(3)}s · warmup ${warm.toFixed(3)}s · 未启动合成`;
     await refreshStatus();
   } catch (err) {
     errorEl.textContent = String(err.message || err);
-    finishTiming({ modeLabel: "Provider 切换（失败）", provider: currentProvider });
-    cudaToggle.checked = currentProvider === "cuda";
+    providerHint.textContent = "Provider 切换失败；可重试。不会自动合成。";
+    suppressProviderChange = true;
+    try {
+      cudaToggle.checked = currentProvider === "cuda";
+    } finally {
+      suppressProviderChange = false;
+    }
     await refreshStatus();
   } finally {
     switchingProvider = false;
@@ -256,19 +281,30 @@ async function switchProvider(wantCuda) {
 
 async function switchModel(modelId) {
   if (!modelId || modelId === currentModelId) {
-    modelSelect.value = currentModelId;
+    suppressModelChange = true;
+    try {
+      modelSelect.value = currentModelId;
+    } finally {
+      suppressModelChange = false;
+    }
     return;
   }
   if (streaming) {
     errorEl.textContent = "请先停止当前流播放再切换模型";
-    modelSelect.value = currentModelId;
+    suppressModelChange = true;
+    try {
+      modelSelect.value = currentModelId;
+    } finally {
+      suppressModelChange = false;
+    }
     return;
   }
+  // Model switch: rebuild + warmup ONLY. Do not start stream/synth or touch TTS timing panel.
   switchingModel = true;
   setBusy(false);
   updateModelUi({ model_id: currentModelId, sample_rate: currentSampleRate, models: modelsCache });
   errorEl.textContent = "";
-  startTiming(`切换模型 → ${modelId}`);
+  modelHint.textContent = `正在切换模型 → ${modelId}（仅重建引擎+预热，不会开始合成）…`;
   try {
     const res = await fetch("/api/models", {
       method: "POST",
@@ -287,27 +323,27 @@ async function switchModel(modelId) {
     }
     currentModelId = data.model_id || modelId;
     if (data.sample_rate != null) currentSampleRate = data.sample_rate;
-    // WebAudio context is sample-rate specific — reset on model change
     if (audioCtx) {
       try { await audioCtx.close(); } catch (_) {}
       audioCtx = null;
     }
-    finishTiming({
-      modeLabel: data.changed ? "模型切换" : "模型未变",
-      serverSeconds: (data.load_elapsed_seconds || 0) + (data.warmup_elapsed_seconds || 0),
-      provider: data.provider || currentProvider,
-      modelId: currentModelId,
-      sampleRate: data.sample_rate,
-      extra:
-        `load ${Number(data.load_elapsed_seconds || 0).toFixed(3)}s` +
-        ` · warmup ${Number(data.warmup_elapsed_seconds || 0).toFixed(3)}s` +
-        (data.message ? ` · ${data.message}` : ""),
-    });
+    const load = Number(data.load_elapsed_seconds || 0);
+    const warm = Number(data.warmup_elapsed_seconds || 0);
+    modelHint.textContent =
+      `已切换到 ${currentModelId}` +
+      (data.changed === false ? "（未变）" : "") +
+      ` · ${currentSampleRate != null ? currentSampleRate + " Hz" : ""}` +
+      ` · load ${load.toFixed(3)}s · warmup ${warm.toFixed(3)}s · 未启动合成`;
     await refreshStatus();
   } catch (err) {
     errorEl.textContent = String(err.message || err);
-    finishTiming({ modeLabel: "模型切换（失败）", modelId: currentModelId });
-    modelSelect.value = currentModelId;
+    modelHint.textContent = "模型切换失败；可重试。不会自动合成。";
+    suppressModelChange = true;
+    try {
+      modelSelect.value = currentModelId;
+    } finally {
+      suppressModelChange = false;
+    }
     await refreshStatus();
   } finally {
     switchingModel = false;
@@ -316,10 +352,38 @@ async function switchModel(modelId) {
   }
 }
 
-cudaToggle.addEventListener("change", () => {
+cudaToggle.addEventListener("click", (ev) => {
+  // Keep toggle clicks from bubbling into any parent handlers.
+  ev.stopPropagation();
+});
+cudaToggle.addEventListener("change", (ev) => {
+  ev.stopPropagation();
+  if (suppressProviderChange) return;
+  if (switchingProvider || switchingModel || streaming) {
+    suppressProviderChange = true;
+    try {
+      cudaToggle.checked = currentProvider === "cuda";
+    } finally {
+      suppressProviderChange = false;
+    }
+    return;
+  }
+  // Only switch provider + warmup — never call stream/synth here.
   switchProvider(cudaToggle.checked);
 });
-modelSelect.addEventListener("change", () => {
+modelSelect.addEventListener("change", (ev) => {
+  ev.stopPropagation();
+  if (suppressModelChange) return;
+  if (switchingProvider || switchingModel || streaming) {
+    suppressModelChange = true;
+    try {
+      modelSelect.value = currentModelId;
+    } finally {
+      suppressModelChange = false;
+    }
+    return;
+  }
+  // Only switch model + warmup — never call stream/synth here.
   switchModel(modelSelect.value);
 });
 

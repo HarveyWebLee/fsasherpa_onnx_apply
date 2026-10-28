@@ -20,16 +20,16 @@
       <select id="modelSelect" class="model-select"></select>
       <div class="provider-badge" id="modelBadge">model: —</div>
     </div>
-    <p class="provider-sub" id="modelHint">44.1k 音质优先；8k 更快。切换会热重建引擎并预热。</p>
+    <p class="provider-sub" id="modelHint">44.1k 音质优先；8k 更快。切换只热重建引擎并预热，不会自动开始合成。</p>
 
     <div class="provider-row" id="providerRow">
       <div class="provider-text">
         <div class="provider-title">使用 CUDA</div>
-        <div class="provider-sub" id="providerHint">关闭 = CPU；开启后会热切换并重建 OfflineTts（含预热）</div>
+        <div class="provider-sub" id="providerHint">关闭 = CPU；开启 = CUDA。切换只热重建引擎并预热，不会自动开始合成</div>
       </div>
-      <label class="switch" title="切换 CPU / CUDA">
+      <label class="switch" for="cudaToggle" title="切换 CPU / CUDA（仅切换 provider，不开始合成）">
         <input type="checkbox" id="cudaToggle" />
-        <span class="slider"></span>
+        <span class="slider" aria-hidden="true"></span>
       </label>
       <div class="provider-badge" id="providerBadge">provider: —</div>
     </div>
@@ -59,7 +59,7 @@
     <section class="timing" id="timingBox" aria-live="polite">
       <div class="timing-label">文本转语音总时长</div>
       <div class="timing-value" id="timingValue">—</div>
-      <div class="timing-detail" id="timingDetail">合成或流播放开始后显示耗时；可对比模型 / CUDA</div>
+      <div class="timing-detail" id="timingDetail">仅在点击「实时流播放 / 整段合成」后计时；切换 CUDA / 模型不会自动开始合成</div>
     </section>
 
     <div class="player-wrap">

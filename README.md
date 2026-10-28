@@ -161,7 +161,7 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 19658
 .\scripts\download_model_8k.ps1
 ```
 
-网页：顶部下拉框切换模型；状态栏显示当前 `model_id` 与采样率。  
+网页：顶部下拉框切换模型；状态栏显示当前 `model_id` 与采样率。 切换 CUDA / 模型**只会**重建引擎并预热，**不会**自动开始流播放或整段合成；总时长面板仅在手动点击合成按钮后更新。  
 API：`GET /api/models` 列出；`POST /api/models` JSON `{"model_id":"melo-zh-en-8k","warmup":true}` 热切换（重建 OfflineTts + 预热）。  
 请求体也可带 `model_id`（`/api/tts`、`/ws/tts`）。合成总时长面板会标注 model，便于 44.1k vs 8k 对比。
 

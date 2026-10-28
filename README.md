@@ -32,6 +32,8 @@ fsasherpa-onnx-test/
   outputs/            # 合成出的 wav
   requirements.txt
   run_web.ps1
+  run_web.sh
+  run_web.bat
   README.md
 ```
 
@@ -82,11 +84,16 @@ cd E:\WORK\CODE\fsasherpa-onnx-test
 python -m uvicorn app.main:app --host 127.0.0.1 --port 7860
 ```
 
-或：
+快捷脚本（按终端选择）：
 
-```powershell
-.\run_web.ps1
-```
+| 终端 | 命令 |
+|------|------|
+| PowerShell | `.\run_web.ps1` |
+| Git Bash (MINGW64) | `./run_web.sh` |
+| Git Bash 调 PowerShell | `powershell.exe -File ./run_web.ps1` |
+| CMD | `run_web.bat` |
+
+> 不要在 Git Bash 里直接 `./run_web.ps1`：bash 会把 `.ps1` 当 shell 脚本执行，并报 BOM / `Set-Location` 找不到等错误。
 
 浏览器打开：http://127.0.0.1:7860
 

@@ -1,4 +1,4 @@
-﻿$Root = Split-Path -Parent $MyInvocation.MyCommand.Path
+$Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $Root
 $py = Join-Path $Root ".venv\Scripts\python.exe"
 if (-not (Test-Path $py)) {

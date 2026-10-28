@@ -21,6 +21,10 @@ const providerHint = document.getElementById("providerHint");
 const modelSelect = document.getElementById("modelSelect");
 const modelBadge = document.getElementById("modelBadge");
 const modelHint = document.getElementById("modelHint");
+const speedNum = document.getElementById("speedNum");
+const speakerSelect = document.getElementById("speakerSelect");
+const speakerBadge = document.getElementById("speakerBadge");
+const speakerHint = document.getElementById("speakerHint");
 
 let currentMode = "mixed";
 let objectUrl = null;
@@ -40,7 +44,14 @@ let switchingModel = false;
 /** Ignore programmatic checkbox/select updates so they never call switch* / synth. */
 let suppressProviderChange = false;
 let suppressModelChange = false;
+let suppressSpeakerChange = false;
 let modelsCache = [];
+let speakersCache = [];
+let voiceRolesCache = [];
+let currentSid = 0;
+let currentSpeakerName = "默认女声";
+let speedMin = 0.5;
+let speedMax = 2.0;
 
 let timingTimer = null;
 let timingStartedAt = 0;
@@ -53,9 +64,65 @@ const defaults = {
 };
 
 textEl.value = defaults.mixed;
+function clampSpeed(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return 1.0;
+  return Math.min(speedMax, Math.max(speedMin, Math.round(n * 10) / 10));
+}
+
+function setSpeedUi(v, refreshStatusBar) {
+  const s = clampSpeed(v);
+  speedEl.value = String(s);
+  if (speedNum) speedNum.value = String(s);
+  speedVal.textContent = s.toFixed(1);
+  if (refreshStatusBar) updateStatusSpeedRole();
+  return s;
+}
+
+function currentSpeed() {
+  return clampSpeed(speedEl.value);
+}
+
+function updateStatusSpeedRole() {
+  if (speakerBadge) {
+    speakerBadge.textContent = `sid: ${currentSid} · ${currentSpeakerName}`;
+  }
+  if (statusBox && statusBox.classList.contains("ok")) {
+    const lines = String(statusBox.textContent || "").split("\n");
+    const next = [];
+    let replacedSpeed = false;
+    let replacedSpk = false;
+    for (const line of lines) {
+      if (line.startsWith("语速:")) {
+        next.push(`语速: ${currentSpeed().toFixed(1)}× · 角色: ${currentSpeakerName} (sid=${currentSid})`);
+        replacedSpeed = true;
+      } else if (line.startsWith("说话人数:")) {
+        next.push(line);
+        replacedSpk = true;
+      } else {
+        next.push(line);
+      }
+    }
+    if (!replacedSpeed) {
+      // insert after threads/provider-ish block if missing
+      next.splice(Math.min(5, next.length), 0,
+        `语速: ${currentSpeed().toFixed(1)}× · 角色: ${currentSpeakerName} (sid=${currentSid})`);
+    }
+    statusBox.textContent = next.join("\n");
+  }
+}
+
 speedEl.addEventListener("input", () => {
-  speedVal.textContent = Number(speedEl.value).toFixed(1);
+  setSpeedUi(speedEl.value, true);
 });
+if (speedNum) {
+  speedNum.addEventListener("change", () => {
+    setSpeedUi(speedNum.value, true);
+  });
+  speedNum.addEventListener("input", () => {
+    speedVal.textContent = clampSpeed(speedNum.value).toFixed(1);
+  });
+}
 
 modes.forEach((btn) => {
   btn.addEventListener("click", () => {
@@ -77,6 +144,9 @@ function setBusy(isBusy) {
   stopBtn.disabled = !isBusy;
   cudaToggle.disabled = lock || !cudaAvailable;
   modelSelect.disabled = lock;
+  if (speakerSelect) speakerSelect.disabled = lock;
+  if (speedEl) speedEl.disabled = lock;
+  if (speedNum) speedNum.disabled = lock;
 }
 
 function formatSeconds(sec) {
@@ -92,6 +162,11 @@ function clearTimingTicker() {
 }
 
 function startTiming(modeLabel) {
+  // Hard guard: provider/model hot-switch must never drive the TTS duration panel.
+  if (switchingProvider || switchingModel) {
+    console.warn("startTiming ignored during model/provider switch:", modeLabel);
+    return;
+  }
   clearTimingTicker();
   timingMode = modeLabel;
   timingStartedAt = performance.now();
@@ -168,6 +243,125 @@ function fillModelSelect(models, activeId) {
   }
 }
 
+
+function fillSpeakerSelect(speakers, voiceRoles, activeSid) {
+  speakersCache = speakers || [];
+  voiceRolesCache = voiceRoles || [];
+  if (!speakerSelect) return;
+  suppressSpeakerChange = true;
+  try {
+    speakerSelect.innerHTML = "";
+    const og1 = document.createElement("optgroup");
+    og1.label = "\u5f53\u524d\u6a21\u578b\u8bf4\u8bdd\u4eba (sid)";
+    const list = speakersCache.length ? speakersCache : [{ sid: 0, name: "\u9ed8\u8ba4\u5973\u58f0", single_speaker_model: true }];
+    list.forEach((s) => {
+      const opt = document.createElement("option");
+      opt.value = `sid:${s.sid}`;
+      const single = s.single_speaker_model ? " \u00b7 \u4ec5\u6b64\u4e00\u4eba" : "";
+      opt.textContent = `${s.name} (sid=${s.sid})${single}`;
+      if (Number(s.sid) === Number(activeSid)) opt.selected = true;
+      og1.appendChild(opt);
+    });
+    speakerSelect.appendChild(og1);
+
+    if (voiceRolesCache.length) {
+      const og2 = document.createElement("optgroup");
+      og2.label = "\u8de8\u6a21\u578b\u97f3\u8272\u9884\u8bbe\uff08\u53ef\u5207\u6a21\u578b\uff0c\u4e0d\u81ea\u52a8\u5408\u6210\uff09";
+      voiceRolesCache.forEach((r) => {
+        const opt = document.createElement("option");
+        opt.value = `role:${r.id}`;
+        opt.textContent = `${r.name}${r.ready ? "" : " \u00b7 \u672a\u4e0b\u8f7d"}`;
+        opt.disabled = !r.ready;
+        if (r.model_id === currentModelId && Number(r.sid) === Number(activeSid)) {
+          // keep sid option selected preferentially; mark role as alt
+        }
+        og2.appendChild(opt);
+      });
+      speakerSelect.appendChild(og2);
+    }
+    // Ensure selection
+    const want = `sid:${activeSid}`;
+    if ([...speakerSelect.options].some((o) => o.value === want)) {
+      speakerSelect.value = want;
+    }
+  } finally {
+    suppressSpeakerChange = false;
+  }
+}
+
+function updateSpeakerUi(data) {
+  if (Array.isArray(data.speakers)) speakersCache = data.speakers;
+  if (Array.isArray(data.voice_roles)) voiceRolesCache = data.voice_roles;
+  if (data.speed_min != null) speedMin = Number(data.speed_min);
+  if (data.speed_max != null) speedMax = Number(data.speed_max);
+  if (speedEl) {
+    speedEl.min = String(speedMin);
+    speedEl.max = String(speedMax);
+  }
+  if (speedNum) {
+    speedNum.min = String(speedMin);
+    speedNum.max = String(speedMax);
+  }
+
+  const speakers = speakersCache.length ? speakersCache : [{ sid: 0, name: "\u9ed8\u8ba4\u5973\u58f0", single_speaker_model: true }];
+  if (!speakers.some((s) => Number(s.sid) === Number(currentSid))) {
+    currentSid = Number(speakers[0].sid);
+  }
+  const cur = speakers.find((s) => Number(s.sid) === Number(currentSid)) || speakers[0];
+  currentSpeakerName = cur.name || `sid ${currentSid}`;
+  fillSpeakerSelect(speakers, voiceRolesCache, currentSid);
+  if (speakerBadge) speakerBadge.textContent = `sid: ${currentSid} · ${currentSpeakerName}`;
+  if (speakerHint) {
+    const single = cur.single_speaker_model || speakers.length <= 1;
+    if (single) {
+      speakerHint.textContent =
+        `\u5f53\u524d\u6a21\u578b\u4ec5 ${speakers.length} \u4e2a\u8bf4\u8bdd\u4eba\uff1a${currentSpeakerName} (sid=${currentSid})\u3002` +
+        (cur.note ? cur.note + "\u3002" : "") +
+        "\u5207\u6362\u89d2\u8272/\u9884\u8bbe\u4e0d\u4f1a\u81ea\u52a8\u5f00\u59cb\u5408\u6210\u3002";
+    } else {
+      speakerHint.textContent =
+        `\u53ef\u9009 ${speakers.length} \u4e2a sid\u3002\u5f53\u524d\uff1a${currentSpeakerName} (sid=${currentSid})\u3002\u5207\u6362\u4e0d\u4f1a\u81ea\u52a8\u5408\u6210\u3002`;
+    }
+  }
+}
+
+async function applySpeakerSelection(value) {
+  if (!value) return;
+  if (streaming) {
+    if (errorEl) errorEl.textContent = "\u8bf7\u5148\u505c\u6b62\u5f53\u524d\u6d41\u64ad\u653e\u518d\u5207\u6362\u89d2\u8272";
+    suppressSpeakerChange = true;
+    try {
+      speakerSelect.value = `sid:${currentSid}`;
+    } finally {
+      suppressSpeakerChange = false;
+    }
+    return;
+  }
+  if (value.startsWith("sid:")) {
+    currentSid = Number(value.slice(4));
+    const sp = speakersCache.find((s) => Number(s.sid) === currentSid);
+    currentSpeakerName = sp ? sp.name : `sid ${currentSid}`;
+    updateSpeakerUi({ speakers: speakersCache, voice_roles: voiceRolesCache });
+    return;
+  }
+  if (value.startsWith("role:")) {
+    const rid = value.slice(5);
+    const role = voiceRolesCache.find((r) => r.id === rid);
+    if (!role) return;
+    currentSid = Number(role.sid || 0);
+    currentSpeakerName = role.name || currentSpeakerName;
+    if (role.model_id && role.model_id !== currentModelId) {
+      // Switch model only (warmup); never start synthesis — same rule as model/CUDA.
+      await switchModel(role.model_id);
+    }
+    updateSpeakerUi({ speakers: speakersCache, voice_roles: voiceRolesCache });
+    if (speakerHint) {
+      speakerHint.textContent =
+        `\u5df2\u9009\u9884\u8bbe\uff1a${role.name}\uff08model=${role.model_id}, sid=${currentSid}\uff09\u3002\u672a\u542f\u52a8\u5408\u6210\u3002`;
+    }
+  }
+}
+
 function updateModelUi(data) {
   if (data.model_id) currentModelId = data.model_id;
   if (data.sample_rate != null) currentSampleRate = data.sample_rate;
@@ -183,7 +377,7 @@ function updateModelUi(data) {
   modelBadge.className = "provider-badge" + (switchingModel ? " busy" : "");
   const active = (data.models || modelsCache).find((m) => m.id === currentModelId);
   if (switchingModel) {
-    modelHint.textContent = "正在切换模型并重建 OfflineTts / 预热…";
+    modelHint.textContent = "正在切换模型并重建引擎 / 预热（不会开始合成）…";
   } else if (active) {
     modelHint.textContent = `${active.description} · 目录 ${active.dir}`;
   }
@@ -208,7 +402,7 @@ function updateProviderUi(data) {
     providerHint.textContent =
       "未检测到 CUDA 运行时（需 sherpa +cuda12 轮子与 requirements-cuda.txt）。开关已禁用。";
   } else if (switchingProvider) {
-    providerHint.textContent = "正在切换并重建 OfflineTts / 预热，请稍候…";
+    providerHint.textContent = "正在切换并重建引擎 / 预热（不会开始合成），请稍候…";
   } else {
     providerHint.textContent =
       "关闭 = CPU；开启 = CUDA。切换只热重建引擎并预热，不会自动开始合成。";
@@ -383,9 +577,28 @@ modelSelect.addEventListener("change", (ev) => {
     }
     return;
   }
-  // Only switch model + warmup — never call stream/synth here.
-  switchModel(modelSelect.value);
+  const nextId = modelSelect.value;
+  if (!nextId || nextId === currentModelId) return;
+  // Only switch model + warmup — never startTiming / stream / synth here.
+  switchModel(nextId);
 });
+if (speakerSelect) {
+  speakerSelect.addEventListener("change", (ev) => {
+    ev.stopPropagation();
+    if (suppressSpeakerChange) return;
+    if (switchingProvider || switchingModel || streaming) {
+      suppressSpeakerChange = true;
+      try {
+        speakerSelect.value = `sid:${currentSid}`;
+      } finally {
+        suppressSpeakerChange = false;
+      }
+      return;
+    }
+    // Only change sid / maybe switch model via role preset — never stream/synth.
+    applySpeakerSelection(speakerSelect.value);
+  });
+}
 
 async function refreshStatus() {
   try {
@@ -393,6 +606,8 @@ async function refreshStatus() {
     const data = await res.json();
     updateProviderUi(data);
     updateModelUi(data);
+
+    updateSpeakerUi(data);
     if (data.model_ready) {
       statusBox.className = "status ok";
       statusBox.textContent =
@@ -401,6 +616,8 @@ async function refreshStatus() {
         `目录: ${data.model_dir}\n` +
         `采样率: ${data.sample_rate || "-"} Hz\n` +
         `线程: ${data.num_threads || "-"} · provider: ${data.provider || "cpu"}\n` +
+        `语速: ${currentSpeed().toFixed(1)}× · 角色: ${currentSpeakerName} (sid=${currentSid})\n` +
+        `说话人数: ${data.num_speakers != null ? data.num_speakers : "-"}\n` +
         `CUDA 运行时: ${data.cuda_available ? "可用" : "不可用"}` +
         (data.busy ? "\n状态: 合成进行中" : "");
       if (!uiLocked()) {
@@ -529,8 +746,8 @@ streamBtn.addEventListener("click", async () => {
     ws.send(
       JSON.stringify({
         text,
-        speed: Number(speedEl.value),
-        sid: 0,
+        speed: currentSpeed(),
+        sid: currentSid,
         mode: currentMode,
       })
     );
@@ -637,8 +854,8 @@ synthBtn.addEventListener("click", async () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         text,
-        speed: Number(speedEl.value),
-        sid: 0,
+        speed: currentSpeed(),
+        sid: currentSid,
         mode: currentMode,
       }),
     });

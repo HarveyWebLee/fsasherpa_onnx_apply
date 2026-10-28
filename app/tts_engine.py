@@ -30,13 +30,22 @@ class ModelSpec:
     description: str
     expected_sample_rate: Optional[int] = None
     tags: tuple[str, ...] = ()
+    speakers: tuple[dict, ...] = ()
 
     @property
     def path(self) -> Path:
         return MODELS_ROOT / self.dir_name
 
 
-# Registry of known models. dirs may be absent until downloaded.
+_MELO_ZH_EN_SPEAKERS: tuple[dict, ...] = (
+    {
+        "sid": 0,
+        "name": "默认女声",
+        "lang": "zh+en",
+        "note": "官方说明：Chinese+English 模型仅 1 个女声",
+    },
+)
+
 MODEL_REGISTRY: dict[str, ModelSpec] = {
     "melo-zh-en-44k": ModelSpec(
         id="melo-zh-en-44k",
@@ -45,6 +54,7 @@ MODEL_REGISTRY: dict[str, ModelSpec] = {
         description="默认音质优先（int8 / 44.1 kHz）",
         expected_sample_rate=44100,
         tags=("default", "quality"),
+        speakers=_MELO_ZH_EN_SPEAKERS,
     ),
     "melo-zh-en-8k": ModelSpec(
         id="melo-zh-en-8k",
@@ -53,8 +63,31 @@ MODEL_REGISTRY: dict[str, ModelSpec] = {
         description="更快更小（8 kHz，音质下降）；目录独立，不替换 44.1k",
         expected_sample_rate=8000,
         tags=("fast", "8k"),
+        speakers=_MELO_ZH_EN_SPEAKERS,
     ),
 }
+
+
+VOICE_ROLE_PRESETS: list[dict] = [
+    {
+        "id": "melo-female-44k",
+        "name": "Melo 女声 · 44.1k（音质优先）",
+        "model_id": "melo-zh-en-44k",
+        "sid": 0,
+        "description": "同一女声，44.1 kHz",
+    },
+    {
+        "id": "melo-female-8k",
+        "name": "Melo 女声 · 8k（速度优先）",
+        "model_id": "melo-zh-en-8k",
+        "sid": 0,
+        "description": "同一女声，8 kHz 更快",
+    },
+]
+
+SPEED_MIN = 0.5
+SPEED_MAX = 2.0
+SPEED_DEFAULT = 1.0
 
 
 def _default_num_threads() -> int:
@@ -311,8 +344,73 @@ class TtsEngine:
             "switch_count": self._switch_count,
         }
 
+    def list_speakers(self) -> list[dict]:
+        """Speakers for the active model (registry names + live num_speakers)."""
+        spec = MODEL_REGISTRY.get(self.model_id)
+        documented = list(spec.speakers) if spec and spec.speakers else []
+        live_n: Optional[int] = None
+        if self._tts is not None:
+            try:
+                live_n = int(self._tts.num_speakers)
+            except Exception:  # noqa: BLE001
+                live_n = None
+        if live_n is None and self.model_ready():
+            try:
+                live_n = int(self.ensure_loaded().num_speakers)
+            except Exception:  # noqa: BLE001
+                live_n = None
+
+        by_sid = {int(s["sid"]): dict(s) for s in documented}
+        n = live_n if live_n is not None else (max(by_sid.keys()) + 1 if by_sid else 1)
+        out: list[dict] = []
+        for sid in range(max(int(n), 1)):
+            if sid in by_sid:
+                item = dict(by_sid[sid])
+            else:
+                item = {
+                    "sid": sid,
+                    "name": f"说话人 {sid}",
+                    "lang": None,
+                    "note": "模型未提供名称，使用序号",
+                }
+            item["sid"] = sid
+            item["active"] = True
+            item["single_speaker_model"] = int(n) <= 1
+            out.append(item)
+        return out
+
+    def list_voice_roles(self) -> list[dict]:
+        """Cross-model role presets."""
+        roles: list[dict] = []
+        for preset in VOICE_ROLE_PRESETS:
+            mid = preset["model_id"]
+            spec = MODEL_REGISTRY.get(mid)
+            ready = model_files_ready(spec.path) if spec else False
+            roles.append(
+                {
+                    **preset,
+                    "ready": ready,
+                    "active": mid == self.model_id and int(preset.get("sid", 0)) == 0,
+                    "model_name": spec.name if spec else mid,
+                }
+            )
+        return roles
+
     def runtime_info(self) -> dict:
         spec = MODEL_REGISTRY.get(self.model_id)
+        speakers = (
+            self.list_speakers()
+            if self.model_ready() or (spec and spec.speakers)
+            else []
+        )
+        if speakers:
+            num_speakers = len(speakers)
+        elif self._tts is not None:
+            num_speakers = int(self._tts.num_speakers)
+        elif spec and spec.speakers:
+            num_speakers = len(spec.speakers)
+        else:
+            num_speakers = None
         return {
             "num_threads": self.num_threads,
             "provider": self.provider,
@@ -326,6 +424,12 @@ class TtsEngine:
             "switch_count": self._switch_count,
             "busy": self._busy > 0,
             "cuda_available": self.cuda_runtime_present(),
+            "num_speakers": num_speakers,
+            "speakers": speakers,
+            "voice_roles": self.list_voice_roles(),
+            "speed_min": SPEED_MIN,
+            "speed_max": SPEED_MAX,
+            "speed_default": SPEED_DEFAULT,
         }
 
     @staticmethod

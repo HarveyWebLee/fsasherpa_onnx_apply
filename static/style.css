@@ -1,4 +1,4 @@
-﻿:root {
+:root {
   --bg: #0f172a;
   --card: #111827;
   --text: #e5e7eb;
@@ -233,3 +233,31 @@ footer code { color: #7dd3fc; }
 .model-select:disabled { opacity: 0.45; }
 .model-select option:disabled { color: #6b7280; }
 
+
+
+.ctrl-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+  margin-top: 8px;
+}
+@media (min-width: 640px) {
+  .ctrl-grid { grid-template-columns: 1fr 1fr; }
+}
+.ctrl-block {
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: #0b1220;
+}
+.speed-row { margin-top: 4px; }
+.speed-num {
+  width: 72px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: #111827;
+  color: var(--text);
+  padding: 8px 10px;
+  font-size: 0.95rem;
+  font-variant-numeric: tabular-nums;
+}

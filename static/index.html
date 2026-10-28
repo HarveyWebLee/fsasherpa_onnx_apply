@@ -4,13 +4,13 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>sherpa-onnx TTS 测试</title>
-  <link rel="stylesheet" href="/static/style.css" />
+  <link rel="stylesheet" href="/static/style.css?v=speed-speaker-1" />
 </head>
 <body>
   <main class="card">
     <header>
       <h1>sherpa-onnx 文本转语音</h1>
-      <p class="sub">多模型切换 · CUDA · 整段 / <strong>实时流播放</strong></p>
+      <p class="sub">多模型 · 语速 · 角色 · CUDA · 整段 / <strong>实时流播放</strong></p>
     </header>
 
     <section class="status" id="statusBox">正在检查模型状态…</section>
@@ -44,12 +44,25 @@
     <label class="label" for="text">输入文本</label>
     <textarea id="text" rows="5" maxlength="2000" placeholder="输入中文、英文或中英混合文本…"></textarea>
 
-    <div class="row">
-      <label class="label inline" for="speed">语速 <span id="speedVal">1.0</span></label>
-      <input id="speed" type="range" min="0.5" max="2.0" step="0.1" value="1.0" />
+        <div class="ctrl-grid">
+      <div class="ctrl-block">
+        <label class="label" for="speed">语速 <span id="speedVal">1.0</span>×（范围 0.5–2.0）</label>
+        <div class="row speed-row">
+          <input id="speed" type="range" min="0.5" max="2.0" step="0.1" value="1.0" />
+          <input id="speedNum" class="speed-num" type="number" min="0.5" max="2.0" step="0.1" value="1.0" />
+        </div>
+      </div>
+      <div class="ctrl-block">
+        <label class="label" for="speakerSelect">语音角色 / 说话人</label>
+        <div class="model-row">
+          <select id="speakerSelect" class="model-select"></select>
+          <div class="provider-badge" id="speakerBadge">sid: 0</div>
+        </div>
+        <p class="provider-sub" id="speakerHint">Melo 中英模型通常仅 1 个女声（sid=0）。切换角色不会自动开始合成。</p>
+      </div>
     </div>
 
-    <div class="actions">
+<div class="actions">
       <button id="streamBtn" class="primary" type="button">实时流播放</button>
       <button id="stopBtn" class="ghost" type="button" disabled>停止</button>
       <button id="synthBtn" class="ghost" type="button">整段合成下载</button>
@@ -77,6 +90,6 @@
       <p>基于 <a href="https://github.com/k2-fsa/sherpa-onnx" target="_blank" rel="noreferrer">k2-fsa/sherpa-onnx</a>。8k 模型目录独立，不替换 44.1k。</p>
     </footer>
   </main>
-  <script src="/static/app.js"></script>
+  <script src="/static/app.js?v=speed-speaker-1"></script>
 </body>
 </html>

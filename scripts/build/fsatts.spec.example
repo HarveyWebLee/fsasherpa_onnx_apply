@@ -1,0 +1,2 @@
+# PyInstaller spec example — see docs/PACKAGING.md
+# Copy to fsatts.spec; prefer scripts/build/*.ps1|*.sh for MVP.

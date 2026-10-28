@@ -49,7 +49,7 @@ async def lifespan(_app: FastAPI):
 app = FastAPI(
     title="sherpa-onnx TTS Demo",
     description="基于 sherpa-onnx 的中英 TTS（多模型切换 + CUDA + 实时流）",
-    version="1.4.0",
+    version="1.5.0",
     lifespan=lifespan,
 )
 
@@ -127,11 +127,13 @@ def status():
     if ready:
         try:
             tts = engine.ensure_loaded()
-            info["num_speakers"] = tts.num_speakers
+            info["num_speakers"] = int(tts.num_speakers)
             info["sample_rate"] = tts.sample_rate
             info["lang"] = getattr(tts, "lang", None)
+            info["speakers"] = engine.list_speakers()
         except Exception as exc:  # noqa: BLE001
             info["load_error"] = str(exc)
+    info["voice_roles"] = engine.list_voice_roles()
     return info
 
 
@@ -234,11 +236,13 @@ def synthesize(req: SynthRequest):
         "X-Sample-Rate": str(result.sample_rate),
         "X-Provider": engine.provider,
         "X-Model-Id": engine.model_id,
+        "X-Speed": f"{req.speed:.3f}",
+        "X-Sid": str(int(req.sid)),
         "X-Saved-As": out_name,
         "Content-Disposition": f'inline; filename="{out_name}"',
         "Access-Control-Expose-Headers": (
             "X-Audio-Duration, X-Elapsed-Seconds, X-Elapsed-Ms, X-RTF, "
-            "X-Sample-Rate, X-Provider, X-Model-Id, X-Saved-As"
+            "X-Sample-Rate, X-Provider, X-Model-Id, X-Speed, X-Sid, X-Saved-As"
         ),
     }
     return StreamingResponse(buf, media_type="audio/wav", headers=headers)

@@ -300,6 +300,24 @@ $env:TTS_MODEL_DIR = "$PWD\models\vits-melo-tts-zh_en-8k"
 - 要「秒回」级别延迟，需换更小/更低采样率模型，单靠调线程不够
 
 
+
+## 跨平台打包（草案）
+
+本地插件服务（Windows / Linux amd64 / 麒麟 V10 arm64）方案见 [docs/PACKAGING.md](docs/PACKAGING.md)；骨架脚本在 `scripts/build/`。开发默认端口 **19658**。
+
+## 语速与语音角色
+
+网页提供：
+
+1. **语速**：滑块 + 数字输入，范围 **0.5–2.0**（默认 1.0），会传给 `OfflineTts.generate` 的 `GenerationConfig.speed`；整段合成与实时流均生效。
+2. **语音角色 / 说话人**：
+   - 当前模型的 **sid** 列表（来自 `tts.num_speakers` + 模型文档名）。
+   - **Melo 中英（44.1k / 8k）均为单说话人**：仅 **sid=0「默认女声」**（官方 README：Chinese+English 模型只有 1 个女声）。
+   - 另提供 **跨模型音色预设**：`Melo 女声 · 44.1k` / `Melo 女声 · 8k`（同一女声，音质 vs 速度；选预设只会热切换模型并预热，**不会**自动开始合成）。
+3. 状态栏显示当前 **语速** 与 **角色 (sid)**。切换 CUDA / 模型 / 角色均不自动开合成。
+
+接口：`GET /api/status` 返回 `speakers`、`voice_roles`、`speed_min` / `speed_max`；合成请求 JSON 含 `speed`、`sid`。
+
 ## CLI 验证
 
 ```powershell
@@ -321,7 +339,8 @@ $env:TTS_MODEL_DIR = "$PWD\models\vits-melo-tts-zh_en-8k"
 ## API
 
 - `GET /api/status` — 模型是否就绪
-- `POST /api/tts` — JSON：`{"text":"...","speed":1.0,"sid":0}`，返回 `audio/wav`
+- `POST /api/tts` — JSON：`{"text":"...","speed":1.0,"sid":0}`（speed 0.5–2.0；Melo 中英 sid 仅 0），返回 `audio/wav`
+- `GET /api/status` — 含 `speakers` / `voice_roles` / `speed_min` / `speed_max`
 
 ## 常见问题
 

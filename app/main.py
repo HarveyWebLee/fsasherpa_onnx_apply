@@ -26,6 +26,7 @@ STATIC_DIR = ROOT / "static"
 OUTPUT_DIR = ROOT / "outputs"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     # Warm model once at startup so the first user request is not paying load cost.
@@ -45,7 +46,7 @@ async def lifespan(_app: FastAPI):
 app = FastAPI(
     title="sherpa-onnx TTS Demo",
     description="基于 sherpa-onnx + vits-melo-tts-zh_en 的中英 TTS（整段 + 实时流播放）",
-    version="1.2.0",
+    version="1.3.0",
     lifespan=lifespan,
 )
 
@@ -61,6 +62,15 @@ class SynthRequest(BaseModel):
         default="mixed",
         description="语言模式说明：zh / en / mixed（同一模型，仅 UI 标记）",
     )
+    provider: Optional[str] = Field(
+        default=None,
+        description="可选：本次请求前切换到 cpu/cuda（会重建引擎；一般用 /api/provider）",
+    )
+
+
+class ProviderRequest(BaseModel):
+    provider: str = Field(..., description="cpu 或 cuda")
+    warmup: bool = Field(True, description="切换后是否短句预热")
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -97,6 +107,7 @@ def status():
         "streaming": True,
         "ws_tts": "/ws/tts",
         "http_stream": "/api/tts/stream",
+        "provider_api": "/api/provider",
     }
     info.update(engine.runtime_info())
     if ready:
@@ -110,6 +121,46 @@ def status():
     return info
 
 
+@app.get("/api/provider")
+def get_provider():
+    info = engine.runtime_info()
+    info["ok"] = True
+    return info
+
+
+@app.post("/api/provider")
+def set_provider(req: ProviderRequest):
+    """Hot-switch OfflineTts provider (cpu/cuda). Rebuilds + optional warmup."""
+    if not engine.model_ready():
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "message": "模型未下载。请在项目根目录运行: .\\scripts\\download_model.ps1",
+                "missing": engine.missing_files(),
+            },
+        )
+    try:
+        result = engine.set_provider(req.provider, warmup=bool(req.warmup))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except TimeoutError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"切换 provider 失败: {exc}") from exc
+    return result
+
+
+def _maybe_switch_provider(provider: Optional[str]) -> None:
+    if not provider:
+        return
+    p = str(provider).strip().lower()
+    if not p or p == engine.provider:
+        return
+    engine.set_provider(p, warmup=True)
+
+
 @app.post("/api/tts")
 def synthesize(req: SynthRequest):
     if not engine.model_ready():
@@ -121,9 +172,14 @@ def synthesize(req: SynthRequest):
             },
         )
     try:
+        _maybe_switch_provider(req.provider)
         result = engine.synthesize(req.text, sid=req.sid, speed=req.speed)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except TimeoutError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=f"合成失败: {exc}") from exc
 
@@ -141,11 +197,12 @@ def synthesize(req: SynthRequest):
         "X-Elapsed-Ms": f"{result.elapsed_seconds * 1000.0:.1f}",
         "X-RTF": f"{result.rtf:.3f}",
         "X-Sample-Rate": str(result.sample_rate),
+        "X-Provider": engine.provider,
         "X-Saved-As": out_name,
         "Content-Disposition": f'inline; filename="{out_name}"',
         "Access-Control-Expose-Headers": (
             "X-Audio-Duration, X-Elapsed-Seconds, X-Elapsed-Ms, X-RTF, "
-            "X-Sample-Rate, X-Saved-As"
+            "X-Sample-Rate, X-Provider, X-Saved-As"
         ),
     }
     return StreamingResponse(buf, media_type="audio/wav", headers=headers)
@@ -166,6 +223,11 @@ def synthesize_http_stream(req: SynthRequest):
             },
         )
 
+    try:
+        _maybe_switch_provider(req.provider)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
     def gen():
         for kind, payload in engine.synthesize_stream(
             req.text, sid=req.sid, speed=req.speed
@@ -178,12 +240,8 @@ def synthesize_http_stream(req: SynthRequest):
                 arr = np.asarray(payload, dtype=np.float32)
                 yield arr.tobytes(order="C")
             elif kind == "progress":
-                # optional tiny JSON frames are awkward mixed with raw PCM;
-                # skip in HTTP body — progress available via WebSocket.
                 continue
             elif kind == "end":
-                # trailer cannot safely append after raw PCM without framing;
-                # client uses Content-Length absence / connection close.
                 return
             elif kind == "error":
                 raise RuntimeError(str(payload))
@@ -191,7 +249,9 @@ def synthesize_http_stream(req: SynthRequest):
     headers = {
         "X-Stream-Format": "json-meta-line+f32le",
         "X-Channels": "1",
+        "X-Provider": engine.provider,
         "Cache-Control": "no-store",
+        "Access-Control-Expose-Headers": "X-Stream-Format, X-Channels, X-Provider",
     }
     return StreamingResponse(gen(), media_type="application/octet-stream", headers=headers)
 
@@ -201,13 +261,13 @@ async def ws_tts(websocket: WebSocket):
     """WebSocket streaming TTS.
 
     Client -> server (text JSON):
-      {"text": "...", "speed": 1.0, "sid": 0}
+      {"text": "...", "speed": 1.0, "sid": 0, "provider": "cuda"|null}
 
     Server -> client:
-      text JSON  {"type":"meta","sample_rate":44100,"channels":1,"format":"f32le"}
+      text JSON  {"type":"meta",...}
       binary     float32 little-endian PCM chunk
       text JSON  {"type":"progress","progress":0.42}
-      text JSON  {"type":"end", ...}
+      text JSON  {"type":"end", ..., "provider":"..."}
       text JSON  {"type":"error","message":"..."}
     """
     await websocket.accept()
@@ -225,6 +285,7 @@ async def ws_tts(websocket: WebSocket):
         text = str(req.get("text", "")).strip()
         speed = float(req.get("speed", 1.0))
         sid = int(req.get("sid", 0))
+        provider = req.get("provider")
         if not text:
             await websocket.send_json({"type": "error", "message": "文本不能为空"})
             await websocket.close()
@@ -240,6 +301,14 @@ async def ws_tts(websocket: WebSocket):
             await websocket.close()
             return
 
+        if provider:
+            try:
+                await asyncio.to_thread(lambda: engine.set_provider(str(provider), warmup=True))
+            except Exception as exc:  # noqa: BLE001
+                await websocket.send_json({"type": "error", "message": f"切换 provider 失败: {exc}"})
+                await websocket.close()
+                return
+
         loop = asyncio.get_running_loop()
         event_q: asyncio.Queue = asyncio.Queue(maxsize=128)
 
@@ -250,7 +319,6 @@ async def ws_tts(websocket: WebSocket):
                 ):
                     if cancel.is_set():
                         break
-                    # block until space; use call_soon_threadsafe via run_coroutine
                     fut = asyncio.run_coroutine_threadsafe(event_q.put((kind, payload)), loop)
                     try:
                         fut.result(timeout=60)

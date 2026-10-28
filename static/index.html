@@ -10,10 +10,22 @@
   <main class="card">
     <header>
       <h1>sherpa-onnx 文本转语音</h1>
-      <p class="sub">模型：vits-melo-tts-zh_en · 支持整段合成与 <strong>实时流播放</strong></p>
+      <p class="sub">模型：vits-melo-tts-zh_en · 支持整段合成与 <strong>实时流播放</strong> · 可切换 CUDA</p>
     </header>
 
     <section class="status" id="statusBox">正在检查模型状态…</section>
+
+    <div class="provider-row" id="providerRow">
+      <div class="provider-text">
+        <div class="provider-title">使用 CUDA</div>
+        <div class="provider-sub" id="providerHint">关闭 = CPU；开启后会热切换并重建 OfflineTts（含预热）</div>
+      </div>
+      <label class="switch" title="切换 CPU / CUDA">
+        <input type="checkbox" id="cudaToggle" />
+        <span class="slider"></span>
+      </label>
+      <div class="provider-badge" id="providerBadge">provider: —</div>
+    </div>
 
     <label class="label" for="mode">语言模式（说明用，同一模型）</label>
     <div class="modes" id="modes">
@@ -40,7 +52,7 @@
     <section class="timing" id="timingBox" aria-live="polite">
       <div class="timing-label">文本转语音总时长</div>
       <div class="timing-value" id="timingValue">—</div>
-      <div class="timing-detail" id="timingDetail">合成或流播放开始后，这里显示耗时（秒）</div>
+      <div class="timing-detail" id="timingDetail">合成或流播放开始后，这里显示耗时（秒）；可对比 CUDA 开/关</div>
     </section>
 
     <div class="player-wrap">
@@ -54,7 +66,7 @@
     </div>
 
     <footer>
-      <p>实时流：WebSocket <code>/ws/tts</code> + Web Audio API 边收边播。整段：<code>POST /api/tts</code> 返回完整 WAV。</p>
+      <p>实时流：WebSocket <code>/ws/tts</code> + Web Audio API。整段：<code>POST /api/tts</code>。Provider：<code>POST /api/provider</code>。</p>
       <p>基于 <a href="https://github.com/k2-fsa/sherpa-onnx" target="_blank" rel="noreferrer">k2-fsa/sherpa-onnx</a>。英文词需出现在 lexicon.txt 中。</p>
     </footer>
   </main>

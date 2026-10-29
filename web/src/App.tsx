@@ -11,6 +11,7 @@ import {
   Select,
   Slider,
   Space,
+  Switch,
   Tag,
   Typography,
   App as AntApp,
@@ -26,6 +27,8 @@ import {
 import {
   fetchSpeakers,
   fetchStatus,
+  float32ToWavBlob,
+  synthesizeStreamWs,
   synthesizeWav,
   switchModel,
   switchProvider,
@@ -50,6 +53,57 @@ function modelOptionLabel(m: ModelInfo): string {
   return `${m.name} · ${langLabel(m.lang)}`;
 }
 
+/** Schedule PCM chunks on AudioContext for near-realtime playback. */
+class StreamPlayer {
+  private ctx: AudioContext | null = null;
+  private nextTime = 0;
+  private sampleRate = 24000;
+  readonly chunks: Float32Array[] = [];
+
+  start(sampleRate: number) {
+    this.stop();
+    this.sampleRate = sampleRate;
+    this.ctx = new AudioContext({ sampleRate });
+    this.nextTime = this.ctx.currentTime + 0.05;
+    this.chunks.length = 0;
+  }
+
+  push(samples: Float32Array) {
+    if (!samples.length) return;
+    const copy = new Float32Array(samples);
+    this.chunks.push(copy);
+    if (!this.ctx) return;
+    const buf = this.ctx.createBuffer(1, copy.length, this.sampleRate);
+    buf.copyToChannel(copy, 0);
+    const src = this.ctx.createBufferSource();
+    src.buffer = buf;
+    src.connect(this.ctx.destination);
+    const startAt = Math.max(this.nextTime, this.ctx.currentTime + 0.01);
+    src.start(startAt);
+    this.nextTime = startAt + buf.duration;
+  }
+
+  concat(): Float32Array {
+    const total = this.chunks.reduce((n, c) => n + c.length, 0);
+    const out = new Float32Array(total);
+    let o = 0;
+    for (const c of this.chunks) {
+      out.set(c, o);
+      o += c.length;
+    }
+    return out;
+  }
+
+  stop() {
+    try {
+      void this.ctx?.close();
+    } catch {
+      /* ignore */
+    }
+    this.ctx = null;
+  }
+}
+
 export default function App() {
   const { message } = AntApp.useApp();
   const { token } = theme.useToken();
@@ -65,12 +119,15 @@ export default function App() {
   const [text, setText] = useState(SAMPLE);
   const [busy, setBusy] = useState(false);
   const [switching, setSwitching] = useState(false);
+  const [streamPlay, setStreamPlay] = useState(true);
+  const [progress, setProgress] = useState<number | null>(null);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [metrics, setMetrics] = useState<Record<string, string>>({});
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const switchGen = useRef(0);
-  /** Preserve speaker across status refreshes after synthesis. */
   const sidRef = useRef(0);
+  const abortRef = useRef<AbortController | null>(null);
+  const playerRef = useRef(new StreamPlayer());
 
   const applyStatus = useCallback((s: StatusPayload, opts?: { resetSid?: boolean }) => {
     setStatus(s);
@@ -113,14 +170,24 @@ export default function App() {
   }, [refresh, message]);
 
   useEffect(() => {
+    const player = playerRef.current;
     return () => {
       if (audioUrl) URL.revokeObjectURL(audioUrl);
+      player.stop();
+      abortRef.current?.abort();
     };
   }, [audioUrl]);
 
   const readyModels = useMemo(() => models.filter((m) => m.ready), [models]);
   const currentModel =
     readyModels.find((m) => m.id === modelId) || models.find((m) => m.id === modelId);
+  const canStream = Boolean(
+    currentModel?.supports_stream ?? status?.supports_stream ?? status?.streaming ?? true,
+  );
+
+  useEffect(() => {
+    if (!canStream && streamPlay) setStreamPlay(false);
+  }, [canStream, streamPlay]);
 
   const onModelChange = async (next: string) => {
     if (next === modelId) return;
@@ -172,6 +239,77 @@ export default function App() {
     }
   };
 
+  const setResultUrl = (url: string | null) => {
+    setAudioUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return url;
+    });
+  };
+
+  const doSynthBatch = async () => {
+    const { blob, headers } = await synthesizeWav({
+      text: text.trim(),
+      speed,
+      sid: sidRef.current,
+      model_id: modelId,
+      provider,
+    });
+    const url = URL.createObjectURL(blob);
+    setResultUrl(url);
+    setMetrics({
+      耗时: headers["X-Elapsed-Ms"] ? `${headers["X-Elapsed-Ms"]} ms` : "-",
+      音频: headers["X-Audio-Duration"] ? `${headers["X-Audio-Duration"]} s` : "-",
+      RTF: headers["X-RTF"] || "-",
+      采样率: headers["X-Sample-Rate"] || "-",
+      模型: headers["X-Model-Id"] || modelId,
+      说话人: headers["X-Sid"] || String(sidRef.current),
+      模式: "完整合成后播放",
+    });
+    requestAnimationFrame(() => {
+      audioRef.current?.play().catch(() => undefined);
+    });
+  };
+
+  const doSynthStream = async () => {
+    const ac = new AbortController();
+    abortRef.current = ac;
+    const player = playerRef.current;
+    let sampleRate = 24000;
+    setProgress(0);
+    const end = await synthesizeStreamWs(
+      {
+        text: text.trim(),
+        speed,
+        sid: sidRef.current,
+        model_id: modelId,
+        provider,
+      },
+      {
+        onMeta: (meta) => {
+          sampleRate = Number(meta.sample_rate || 24000);
+          player.start(sampleRate);
+        },
+        onChunk: (samples) => player.push(samples),
+        onProgress: (p) => setProgress(p),
+      },
+      ac.signal,
+    );
+    const all = player.concat();
+    const blob = float32ToWavBlob(all, sampleRate);
+    const url = URL.createObjectURL(blob);
+    setResultUrl(url);
+    setMetrics({
+      耗时: end.elapsed_ms != null ? `${end.elapsed_ms} ms` : "-",
+      音频: end.audio_duration != null ? `${Number(end.audio_duration).toFixed(3)} s` : "-",
+      RTF: end.rtf != null ? String(end.rtf) : "-",
+      采样率: String(end.sample_rate || sampleRate),
+      模型: String(end.model_id || modelId),
+      说话人: String(end.sid ?? sidRef.current),
+      模式: "边合成边播放",
+    });
+    setProgress(1);
+  };
+
   const doSynth = async () => {
     const t = text.trim();
     if (!t) {
@@ -179,35 +317,20 @@ export default function App() {
       return;
     }
     setBusy(true);
+    setProgress(null);
     try {
-      const { blob, headers } = await synthesizeWav({
-        text: t,
-        speed,
-        sid: sidRef.current,
-        model_id: modelId,
-        provider,
-      });
-      if (audioUrl) URL.revokeObjectURL(audioUrl);
-      const url = URL.createObjectURL(blob);
-      setAudioUrl(url);
-      setMetrics({
-        耗时: headers["X-Elapsed-Ms"] ? `${headers["X-Elapsed-Ms"]} ms` : "-",
-        音频: headers["X-Audio-Duration"] ? `${headers["X-Audio-Duration"]} s` : "-",
-        RTF: headers["X-RTF"] || "-",
-        采样率: headers["X-Sample-Rate"] || "-",
-        模型: headers["X-Model-Id"] || modelId,
-        说话人: headers["X-Sid"] || String(sidRef.current),
-      });
-      requestAnimationFrame(() => {
-        audioRef.current?.play().catch(() => undefined);
-      });
+      if (streamPlay && canStream) {
+        await doSynthStream();
+      } else {
+        await doSynthBatch();
+      }
       message.success("合成完成");
-      // Refresh status metrics but KEEP selected speaker
       refresh().catch(() => undefined);
     } catch (e) {
       message.error(`合成失败: ${(e as Error).message}`);
     } finally {
       setBusy(false);
+      abortRef.current = null;
     }
   };
 
@@ -241,51 +364,77 @@ export default function App() {
         <Col xs={24} lg={15}>
           <Card title="合成" bordered={false} className="panel" loading={loading}>
             <Paragraph type="secondary" style={{ marginTop: 0 }}>
-              切换模型或说话人不会自动合成，确认参数后点击「开始合成」。当前模型均支持中英混合。
+              切换模型或说话人不会自动合成；确认参数后点击「开始合成」。当前可选模型均支持中英混合。
             </Paragraph>
             <Space direction="vertical" size="middle" style={{ width: "100%" }}>
-              <div>
-                <Text strong>模型</Text>
-                <Select
-                  showSearch
-                  style={{ width: "100%", marginTop: 6 }}
-                  value={readyModels.some((m) => m.id === modelId) ? modelId : undefined}
-                  loading={switching}
-                  optionFilterProp="label"
-                  onChange={onModelChange}
-                  placeholder={readyModels.length ? "选择已下载模型" : "暂无已下载模型"}
-                  options={readyModels.map((m) => ({
-                    value: m.id,
-                    label: modelOptionLabel(m),
-                  }))}
-                  notFoundContent="没有已下载的模型"
-                />
-                {currentModel && (
-                  <div className="hint" style={{ marginTop: 6 }}>
-                    <Tag color="green">{langLabel(currentModel.lang)}</Tag>
-                    {currentModel.description}
-                    {currentModel.expected_sample_rate
-                      ? ` · ${currentModel.expected_sample_rate} Hz`
-                      : ""}
-                    {` · ${currentModel.num_speakers} 说话人`}
-                  </div>
-                )}
-              </div>
+              <Row gutter={[16, 12]}>
+                <Col xs={24} md={12}>
+                  <Text strong>模型</Text>
+                  <Select
+                    showSearch
+                    style={{ width: "100%", marginTop: 6 }}
+                    value={readyModels.some((m) => m.id === modelId) ? modelId : undefined}
+                    loading={switching}
+                    optionFilterProp="label"
+                    onChange={onModelChange}
+                    placeholder={readyModels.length ? "选择已下载模型" : "暂无已下载模型"}
+                    options={readyModels.map((m) => ({
+                      value: m.id,
+                      label: modelOptionLabel(m),
+                    }))}
+                    notFoundContent="没有已下载的模型"
+                  />
+                  {currentModel && (
+                    <div className="hint" style={{ marginTop: 6 }}>
+                      <Tag color="green">{langLabel(currentModel.lang)}</Tag>
+                      {currentModel.supports_stream === false ? (
+                        <Tag color="default">不支持流式</Tag>
+                      ) : (
+                        <Tag color="blue">支持流式</Tag>
+                      )}
+                      {currentModel.description}
+                      {currentModel.expected_sample_rate
+                        ? ` · ${currentModel.expected_sample_rate} Hz`
+                        : ""}
+                      {` · ${currentModel.num_speakers} 说话人`}
+                    </div>
+                  )}
+                </Col>
+                <Col xs={24} md={12}>
+                  <Text strong>说话人</Text>
+                  <Select
+                    showSearch
+                    style={{ width: "100%", marginTop: 6 }}
+                    value={sid}
+                    onChange={onSpeakerChange}
+                    optionFilterProp="label"
+                    options={speakers.map((s) => ({
+                      value: s.sid,
+                      label: `${s.name} (sid=${s.sid})${s.note ? ` · ${s.note}` : ""}`,
+                    }))}
+                    placeholder="选择说话人"
+                  />
+                </Col>
+              </Row>
 
               <div>
-                <Text strong>说话人</Text>
-                <Select
-                  showSearch
-                  style={{ width: "100%", marginTop: 6 }}
-                  value={sid}
-                  onChange={onSpeakerChange}
-                  optionFilterProp="label"
-                  options={speakers.map((s) => ({
-                    value: s.sid,
-                    label: `${s.name} (sid=${s.sid})`,
-                  }))}
-                  placeholder="选择说话人"
-                />
+                <Flex justify="space-between" align="center">
+                  <Text strong>边合成边播放</Text>
+                  <Switch
+                    checked={streamPlay && canStream}
+                    disabled={!canStream || busy}
+                    onChange={setStreamPlay}
+                    checkedChildren="开"
+                    unCheckedChildren="关"
+                  />
+                </Flex>
+                <div className="hint" style={{ marginTop: 4 }}>
+                  {canStream
+                    ? streamPlay
+                      ? "开启：通过 WebSocket 流式合成并实时播放"
+                      : "关闭：完整合成后再播放 WAV"
+                    : "当前模型不支持流式，已禁用该开关"}
+                </div>
               </div>
 
               <div>
@@ -344,6 +493,9 @@ export default function App() {
                 >
                   开始合成
                 </Button>
+                {progress != null && busy && (
+                  <Text type="secondary">进度 {(progress * 100).toFixed(0)}%</Text>
+                )}
               </Flex>
 
               <div className="audio-box">

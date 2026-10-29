@@ -28,6 +28,8 @@ MIRRORS = [
 HF_REPOS: dict[str, str] = {
     "melo-zh-en-44k": "csukuangfj/vits-melo-tts-zh_en",
     "melo-zh-en-8k": "csukuangfj/vits-melo-tts-zh_en-8k",
+    # Prefer GitHub tarball for Kokoro (includes espeak-ng-data tree).
+    "kokoro-zh-en-v1_1": "csukuangfj/kokoro-int8-multi-lang-v1_1",
 }
 
 HF_BASES = [
@@ -107,6 +109,20 @@ def _hf_tree_download(model_id: str, dest_dir: Path) -> bool:
             "phone.fst",
         ]
     )
+    if getattr(spec, "backend", "vits") == "kokoro":
+        names.extend(
+            [
+                "voices.bin",
+                "lexicon-zh.txt",
+                "lexicon-us-en.txt",
+                "lexicon-gb-en.txt",
+                "date-zh.fst",
+                "number-zh.fst",
+                "phone-zh.fst",
+                "LICENSE",
+                "README.md",
+            ]
+        )
     # unique preserve order
     seen: set[str] = set()
     uniq = []

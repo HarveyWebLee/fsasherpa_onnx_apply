@@ -170,6 +170,11 @@ def health():
         "model_dir": str(engine.model_dir),
         "missing": engine.missing_files() if not engine.model_ready() else [],
         "streaming": True,
+        "supports_stream": bool(
+            MODEL_REGISTRY[engine.model_id].supports_stream
+            if engine.model_id in MODEL_REGISTRY
+            else True
+        ),
         "listen_host": DEFAULT_HOST,
         "listen_port": DEFAULT_PORT,
         "cors_origins": _cors_origins,
@@ -196,6 +201,11 @@ def status():
         "model_dir": str(engine.model_dir),
         "missing": engine.missing_files() if not ready else [],
         "streaming": True,
+        "supports_stream": bool(
+            MODEL_REGISTRY[engine.model_id].supports_stream
+            if engine.model_id in MODEL_REGISTRY
+            else True
+        ),
         "ws_tts": "/ws/tts",
         "http_stream": "/api/tts/stream",
         "provider_api": "/api/provider",

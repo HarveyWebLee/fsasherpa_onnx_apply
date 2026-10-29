@@ -4,11 +4,11 @@
 
 ## 功能
 
-- 中英混合 Melo（44.1k / 8k），支持英文与中英混读
+- 中英混合模型：Melo（44.1k / 8k）+ **Kokoro multi-lang v1.1 int8**（103 说话人）
 - 模型 / 说话人切换（切换**不会**自动合成）
 - HTTP `/api/tts`、流式 `/api/tts/stream`、WebSocket `/ws/tts`，CORS 可配
 - 引擎池 + 在途队列（默认 `TTS_MAX_INFLIGHT=64`，满则 503）
-- Python 依赖由 **uv** 管理（`pyproject.toml` + `uv.lock`）
+- Python 依赖由 **uv** 管理（`pyproject.toml` + `uv.lock`）；前端用 **pnpm**
 
 ## 快速开始
 
@@ -18,33 +18,36 @@ cd E:\WORK\CODE\fsasherpa-onnx-test
 uv sync
 # 构建前端（首次 / 前端变更后）
 cd web; pnpm install; pnpm run build; cd ..
-# 下载默认模型（两套 Melo）
+# 下载默认模型（两套 Melo）；Kokoro 按需另下
 uv run python scripts/download_models.py --bundle
+uv run python scripts/download_models.py --id kokoro-zh-en-v1_1
 # 启动
 .\run_web.ps1
 # 或 uv run python -m uvicorn app.main:app --host 0.0.0.0 --port 19658
 ```
 
-打开 http://127.0.0.1:19658 （默认端口 **19658**）
+打开 http://127.0.0.1:19658 （默认端口 **19658**）。
 
 ## 模型
 
-本项目**仅保留支持中英混合**的 Melo 模型；纯中文多说话人模型已移除。
+本项目**仅保留支持中英混合**的模型；纯中文多说话人模型（zh-ll / 范晨 / AISHELL-3 等）已移除。
 
-| id             | 说明                     | 说话人 | 默认打包 |
-| -------------- | ------------------------ | ------ | -------- |
-| melo-zh-en-44k | 中英混合 · 44.1 kHz      | 1      | 是       |
-| melo-zh-en-8k  | 中英混合 · 8 kHz（更快） | 1      | 是       |
+| id                 | 说明                                      | 说话人 | 默认打包 |
+| ------------------ | ----------------------------------------- | ------ | -------- |
+| melo-zh-en-44k     | 中英混合 · 44.1 kHz                       | 1      | 是       |
+| melo-zh-en-8k      | 中英混合 · 8 kHz（更快）                  | 1      | 是       |
+| kokoro-zh-en-v1_1  | Kokoro multi-lang v1.1 int8 · 24 kHz      | 103    | 否       |
 
 ```powershell
 uv run python scripts/download_models.py --list
 uv run python scripts/download_models.py --bundle
 uv run python scripts/download_models.py --id melo-zh-en-44k
-# 仅 HuggingFace / hf-mirror：
+uv run python scripts/download_models.py --id kokoro-zh-en-v1_1
+# 或 HuggingFace / hf-mirror：
 uv run python scripts/download_models.py --hf-only --id melo-zh-en-8k
 ```
 
-下载优先使用 gh-proxy / ghproxy / ghfast，失败再回退 HuggingFace（`hf-mirror.com`）。
+下载优先使用 gh-proxy / ghproxy / ghfast，失败再回退 HuggingFace（`hf-mirror.com`）。Kokoro 体积较大且含 `espeak-ng-data`，建议走 GitHub 压缩包。
 
 ## 并发
 
@@ -66,7 +69,7 @@ uv run python scripts/download_models.py --hf-only --id melo-zh-en-8k
 
 ## 打包
 
-见 [docs/PACKAGING.md](docs/PACKAGING.md)。默认把两套 Melo 打进安装包；可用 `INCLUDE_MODELS=0` / `-SkipModels` 跳过。
+见 [docs/PACKAGING.md](docs/PACKAGING.md)。默认把两套 Melo 打进安装包；Kokoro 需自行下载或打包时显式包含。可用 `INCLUDE_MODELS=0` / `-SkipModels` 跳过模型。
 
 ## 开发前端
 

@@ -20,6 +20,7 @@ from .models_registry import (
     DEFAULT_MODEL_ID,
     MODEL_REGISTRY,
     VOICE_ROLE_PRESETS,
+    _kokoro_lexicon_paths,
     get_spec,
     model_files_ready,
     model_missing_files,
@@ -137,37 +138,82 @@ class _ModelPool:
         model_dir = spec.path
         if not model_files_ready(model_dir, spec):
             miss = ", ".join(model_missing_files(model_dir, spec)) or "unknown"
-            raise FileNotFoundError(f"模型未就绪 {self.model_id}: {miss}")
+            raise FileNotFoundError(f"模型未就绪: {self.model_id}: {miss}")
         if self.provider == "cuda":
             ensure_cuda_runtime_path()
         onnx = resolve_onnx_path(model_dir, spec)
         assert onnx is not None
-        lexicon = str(model_dir / "lexicon.txt")
         tokens = str(model_dir / "tokens.txt")
-        rule_parts = [
-            model_dir / "phone.fst",
-            model_dir / "date.fst",
-            model_dir / "number.fst",
-        ]
-        # Prefer new_heteronym if present after number
-        het = model_dir / "new_heteronym.fst"
-        if het.is_file():
-            rule_parts.append(het)
-        rule_fsts = ",".join(str(p) for p in rule_parts if p.is_file())
-        config = sherpa_onnx.OfflineTtsConfig(
-            model=sherpa_onnx.OfflineTtsModelConfig(
-                vits=sherpa_onnx.OfflineTtsVitsModelConfig(
-                    model=str(onnx),
-                    lexicon=lexicon,
-                    tokens=tokens,
+        backend = (spec.backend or "vits").lower()
+
+        if backend == "kokoro":
+            voices = model_dir / "voices.bin"
+            data_dir = model_dir / "espeak-ng-data"
+            lexica = _kokoro_lexicon_paths(model_dir)
+            if not voices.is_file() or not data_dir.is_dir() or len(lexica) < 2:
+                raise FileNotFoundError(
+                    f"Kokoro 资源不完整: voices/espeak-ng-data/lexicon @ {model_dir}"
+                )
+            lexicon = ",".join(str(p) for p in lexica)
+            rule_parts = [
+                model_dir / "phone-zh.fst",
+                model_dir / "date-zh.fst",
+                model_dir / "number-zh.fst",
+                model_dir / "phone.fst",
+                model_dir / "date.fst",
+                model_dir / "number.fst",
+            ]
+            rule_fsts = ",".join(str(p) for p in rule_parts if p.is_file())
+            # Deduplicate while preserving order
+            seen: set[str] = set()
+            uniq_rules: list[str] = []
+            for part in rule_fsts.split(",") if rule_fsts else []:
+                if part and part not in seen:
+                    seen.add(part)
+                    uniq_rules.append(part)
+            rule_fsts = ",".join(uniq_rules)
+            config = sherpa_onnx.OfflineTtsConfig(
+                model=sherpa_onnx.OfflineTtsModelConfig(
+                    kokoro=sherpa_onnx.OfflineTtsKokoroModelConfig(
+                        model=str(onnx),
+                        voices=str(voices),
+                        tokens=tokens,
+                        data_dir=str(data_dir),
+                        lexicon=lexicon,
+                        length_scale=1.0,
+                    ),
+                    provider=self.provider,
+                    debug=False,
+                    num_threads=self.num_threads,
                 ),
-                provider=self.provider,
-                debug=False,
-                num_threads=self.num_threads,
-            ),
-            rule_fsts=rule_fsts,
-            max_num_sentences=1,
-        )
+                rule_fsts=rule_fsts,
+                max_num_sentences=1,
+            )
+        else:
+            lexicon = str(model_dir / "lexicon.txt")
+            rule_parts = [
+                model_dir / "phone.fst",
+                model_dir / "date.fst",
+                model_dir / "number.fst",
+            ]
+            het = model_dir / "new_heteronym.fst"
+            if het.is_file():
+                rule_parts.append(het)
+            rule_fsts = ",".join(str(p) for p in rule_parts if p.is_file())
+            config = sherpa_onnx.OfflineTtsConfig(
+                model=sherpa_onnx.OfflineTtsModelConfig(
+                    vits=sherpa_onnx.OfflineTtsVitsModelConfig(
+                        model=str(onnx),
+                        lexicon=lexicon,
+                        tokens=tokens,
+                    ),
+                    provider=self.provider,
+                    debug=False,
+                    num_threads=self.num_threads,
+                ),
+                rule_fsts=rule_fsts,
+                max_num_sentences=1,
+            )
         if not config.validate():
             raise ValueError(f"OfflineTtsConfig 校验失败: {self.model_id}")
         t0 = time.perf_counter()
@@ -288,6 +334,8 @@ class TtsEngine:
                     "active": spec.id == self.model_id,
                     "num_speakers": spec.num_speakers,
                     "lang": spec.lang,
+                    "backend": spec.backend,
+                    "supports_stream": bool(spec.supports_stream),
                     "bundle_default": spec.bundle_default,
                     "archive_mb": spec.archive_mb,
                 }

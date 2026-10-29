@@ -202,6 +202,12 @@ def health():
     return payload
 
 
+
+@app.get("/health")
+def health_alias():
+    """Compat alias for older clients / probes."""
+    return health()
+
 @app.get("/api/status")
 def status():
     ready = engine.model_ready()

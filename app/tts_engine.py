@@ -66,7 +66,7 @@ def _pool_size() -> int:
 
 
 def _max_inflight() -> int:
-    # Accepted concurrent requests (running + waiting). Default ≥50.
+    # Accepted concurrent requests (running + waiting). Default >=50 (code default 64).
     return _env_int("TTS_MAX_INFLIGHT", 64)
 
 

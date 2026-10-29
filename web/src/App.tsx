@@ -417,25 +417,43 @@ export default function App() {
                 </Col>
               </Row>
 
-              <div>
-                <Flex justify="space-between" align="center">
-                  <Text strong>边合成边播放</Text>
-                  <Switch
-                    checked={streamPlay && canStream}
-                    disabled={!canStream || busy}
-                    onChange={setStreamPlay}
-                    checkedChildren="开"
-                    unCheckedChildren="关"
+              <Row gutter={[16, 12]}>
+                <Col xs={24} md={12}>
+                  <Flex justify="space-between" align="center">
+                    <Text strong>边合成边播放</Text>
+                    <Switch
+                      checked={streamPlay && canStream}
+                      disabled={!canStream || busy}
+                      onChange={setStreamPlay}
+                      checkedChildren="开"
+                      unCheckedChildren="关"
+                    />
+                  </Flex>
+                  <div className="hint" style={{ marginTop: 4 }}>
+                    {canStream
+                      ? streamPlay
+                        ? "开启：通过 WebSocket 流式合成并实时播放"
+                        : "关闭：完整合成后再播放 WAV"
+                      : "当前模型不支持流式，已禁用该开关"}
+                  </div>
+                </Col>
+                <Col xs={24} md={12}>
+                  <Text strong>推理后端</Text>
+                  <Select
+                    style={{ width: "100%", marginTop: 6 }}
+                    value={provider}
+                    onChange={onProviderChange}
+                    options={[
+                      { value: "cpu", label: "CPU" },
+                      {
+                        value: "cuda",
+                        label: status?.cuda_available ? "CUDA" : "CUDA（不可用）",
+                        disabled: !status?.cuda_available,
+                      },
+                    ]}
                   />
-                </Flex>
-                <div className="hint" style={{ marginTop: 4 }}>
-                  {canStream
-                    ? streamPlay
-                      ? "开启：通过 WebSocket 流式合成并实时播放"
-                      : "关闭：完整合成后再播放 WAV"
-                    : "当前模型不支持流式，已禁用该开关"}
-                </div>
-              </div>
+                </Col>
+              </Row>
 
               <div>
                 <Flex justify="space-between" align="center">
@@ -449,23 +467,6 @@ export default function App() {
                   value={speed}
                   onChange={setSpeed}
                   marks={{ 0.5: "0.5", 1: "1.0", 1.5: "1.5", 2: "2.0" }}
-                />
-              </div>
-
-              <div>
-                <Text strong>推理后端</Text>
-                <Select
-                  style={{ width: "100%", marginTop: 6 }}
-                  value={provider}
-                  onChange={onProviderChange}
-                  options={[
-                    { value: "cpu", label: "CPU" },
-                    {
-                      value: "cuda",
-                      label: status?.cuda_available ? "CUDA" : "CUDA（不可用）",
-                      disabled: !status?.cuda_available,
-                    },
-                  ]}
                 />
               </div>
 

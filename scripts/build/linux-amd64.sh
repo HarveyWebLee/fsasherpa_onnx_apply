@@ -5,7 +5,6 @@
 #
 # Models: by default, copy usable dirs from repo models/ into the package.
 #   INCLUDE_MODELS=0 ./scripts/build/linux-amd64.sh   # skip (smaller CI/dev)
-#   INCLUDE_HUGE_MODELS=1 ...  # also pack theresa/eula/fanchen
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT"
@@ -20,10 +19,6 @@ case "$INCLUDE_MODELS" in
   0|false|False|no|NO) want_models=0 ;;
 esac
 
-HUGE_MODELS="vits-zh-hf-theresa vits-zh-hf-eula vits-zh-hf-fanchen-C"
-include_huge=0
-case "${INCLUDE_HUGE_MODELS:-0}" in
-  1|true|True|yes|YES) include_huge=1 ;;
 esac
 
 list_model_dirs() {
@@ -33,8 +28,6 @@ list_model_dirs() {
   for d in "$root"/*/; do
     [[ -d "$d" ]] || continue
     name="$(basename "$d")"
-    if (( ! include_huge )); then
-      case " $HUGE_MODELS " in
         *" $name "*) continue ;;
       esac
     fi

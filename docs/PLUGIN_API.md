@@ -44,3 +44,15 @@ CORS：TTS_CORS_ORIGINS（默认 *）
 ## 并发说明
 
 单进程 uvicorn + 每模型引擎池。请保持 workers=1，用 TTS_ENGINE_POOL_SIZE 扩并行。
+
+## 语言能力（Language）
+
+本服务仅提供支持中英混合的 Melo 模型：
+
+| model_id | lang | 英文 | 中英混合 |
+|---|---|---|---|
+| `melo-zh-en-44k` / `melo-zh-en-8k` | `zh+en` | 支持 | 支持 |
+
+`GET /api/models` 与 `/api/status` 返回的每条模型含 `lang` 字段（`zh+en`）。
+默认 HTTP 端口：**19658**（环境变量 `TTS_PORT`）。
+

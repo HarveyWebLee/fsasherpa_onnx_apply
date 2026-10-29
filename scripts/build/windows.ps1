@@ -3,7 +3,6 @@
 #   .\scripts\build\windows.ps1              # include models/ when present (default)
 #   .\scripts\build\windows.ps1 -SkipModels  # smaller CI/dev package without models
 #   $env:INCLUDE_MODELS='0'; .\scripts\build\windows.ps1
-#   $env:INCLUDE_HUGE_MODELS='1'; .\scripts\build\windows.ps1  # also pack theresa/eula/fanchen
 # Requires: uv (https://docs.astral.sh/uv/)
 param(
   [switch]$SkipModels,
@@ -34,14 +33,10 @@ $entry = Join-Path $Root "scripts\build\_entrypoint_fsatts.py"
 $assets = Join-Path $Root "scripts\build\package_assets"
 $srcModels = Join-Path $Root "models"
 
-# Huge multi-speaker packs skipped unless INCLUDE_HUGE_MODELS=1
-$HugeModelDirs = @('vits-zh-hf-theresa', 'vits-zh-hf-eula', 'vits-zh-hf-fanchen-C')
 function Get-ModelDirs([string]$ModelsRoot) {
   if (-not (Test-Path $ModelsRoot)) { return @() }
-  $includeHuge = $env:INCLUDE_HUGE_MODELS -in @('1', 'true', 'True', 'yes', 'YES')
   Get-ChildItem -Path $ModelsRoot -Directory -ErrorAction SilentlyContinue |
     Where-Object {
-      if (-not $includeHuge -and ($_.Name -in $HugeModelDirs)) { return $false }
       $onnx = Get-ChildItem $_.FullName -Filter '*.onnx' -File -ErrorAction SilentlyContinue |
         Where-Object { $_.Name -notmatch 'rule' -and $_.Length -gt 1000 } |
         Select-Object -First 1

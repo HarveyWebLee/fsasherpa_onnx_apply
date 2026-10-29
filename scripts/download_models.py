@@ -26,12 +26,8 @@ MIRRORS = [
 # Optional HuggingFace (and hf-mirror) repos that host the same unpacked tree.
 # Key = model id; value = HF repo id under csukuangfj / k2-fsa style.
 HF_REPOS: dict[str, str] = {
-    "zh-ll": "csukuangfj/sherpa-onnx-vits-zh-ll",
     "melo-zh-en-44k": "csukuangfj/vits-melo-tts-zh_en",
-    "aishell3": "csukuangfj/vits-icefall-zh-aishell3",
-    "fanchen-c": "csukuangfj/vits-zh-hf-fanchen-C",
-    "theresa": "csukuangfj/vits-zh-hf-theresa",
-    "eula": "csukuangfj/vits-zh-hf-eula",
+    "melo-zh-en-8k": "csukuangfj/vits-melo-tts-zh_en-8k",
 }
 
 HF_BASES = [

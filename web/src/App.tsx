@@ -37,7 +37,18 @@ import {
 const { TextArea } = Input;
 const { Title, Text, Paragraph } = Typography;
 
-const SAMPLE = "欢迎使用本地多模型语音合成。Hello from fsatts — Chinese and English mixed TTS.";
+const SAMPLE = "欢迎使用本地中英混合语音合成。Hello from fsatts — Chinese and English mixed TTS.";
+
+function langLabel(lang?: string): string {
+  if (lang === "zh+en" || lang === "zh-en") return "中英混合";
+  if (lang === "zh") return "仅中文";
+  if (lang === "en") return "仅英文";
+  return lang || "未知语言";
+}
+
+function modelOptionLabel(m: ModelInfo): string {
+  return `${m.name} · ${langLabel(m.lang)}`;
+}
 
 export default function App() {
   const { message } = AntApp.useApp();
@@ -58,21 +69,44 @@ export default function App() {
   const [metrics, setMetrics] = useState<Record<string, string>>({});
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const switchGen = useRef(0);
+  /** Preserve speaker across status refreshes after synthesis. */
+  const sidRef = useRef(0);
 
-  const refresh = useCallback(async () => {
-    const s = await fetchStatus();
+  const applyStatus = useCallback((s: StatusPayload, opts?: { resetSid?: boolean }) => {
     setStatus(s);
-    setModels(s.models || []);
-    setModelId(s.model_id || "melo-zh-en-44k");
+    const nextModels = s.models || [];
+    setModels(nextModels);
+    const ready = nextModels.filter((m) => m.ready);
+    const preferred = s.model_id || "melo-zh-en-44k";
+    const nextModelId = ready.some((m) => m.id === preferred)
+      ? preferred
+      : ready[0]?.id || preferred;
+    setModelId(nextModelId);
     setSpeakers(s.speakers || []);
-    setSid(0);
+    if (opts?.resetSid) {
+      sidRef.current = 0;
+      setSid(0);
+    } else {
+      const ids = new Set((s.speakers || []).map((sp) => sp.sid));
+      const keep = ids.has(sidRef.current) ? sidRef.current : (s.speakers?.[0]?.sid ?? 0);
+      sidRef.current = keep;
+      setSid(keep);
+    }
     setProvider((s.provider as "cpu" | "cuda") || "cpu");
     setLoading(false);
-    return s;
   }, []);
 
+  const refresh = useCallback(
+    async (opts?: { resetSid?: boolean }) => {
+      const s = await fetchStatus();
+      applyStatus(s, opts);
+      return s;
+    },
+    [applyStatus],
+  );
+
   useEffect(() => {
-    refresh().catch((e) => {
+    refresh({ resetSid: true }).catch((e) => {
       message.error(`无法连接服务: ${e.message}`);
       setLoading(false);
     });
@@ -85,15 +119,16 @@ export default function App() {
   }, [audioUrl]);
 
   const readyModels = useMemo(() => models.filter((m) => m.ready), [models]);
-  const currentModel = models.find((m) => m.id === modelId);
+  const currentModel =
+    readyModels.find((m) => m.id === modelId) || models.find((m) => m.id === modelId);
 
   const onModelChange = async (next: string) => {
     if (next === modelId) return;
     const gen = ++switchGen.current;
     setSwitching(true);
     setModelId(next);
+    sidRef.current = 0;
     setSid(0);
-    // Responsive speaker list — do NOT auto-synthesize
     try {
       const sp = await fetchSpeakers(next);
       if (gen !== switchGen.current) return;
@@ -103,12 +138,16 @@ export default function App() {
         if (gen !== switchGen.current) return;
         message.success(`已切换模型：${next}`);
       } else {
-        message.warning("该模型尚未下载，合成时会失败。请先运行下载脚本。");
+        message.warning("该模型尚未下载，请先完成下载后再选择。");
       }
       const s = await fetchStatus();
       if (gen !== switchGen.current) return;
       setStatus(s);
       setModels(s.models || []);
+      const keepSpeakers = sp.speakers || s.speakers || [];
+      setSpeakers(keepSpeakers);
+      sidRef.current = 0;
+      setSid(0);
     } catch (e) {
       message.error(`切换模型失败: ${(e as Error).message}`);
     } finally {
@@ -117,8 +156,8 @@ export default function App() {
   };
 
   const onSpeakerChange = (next: number) => {
+    sidRef.current = next;
     setSid(next);
-    // No auto TTS — responsive UI only
   };
 
   const onProviderChange = async (next: "cpu" | "cuda") => {
@@ -144,7 +183,7 @@ export default function App() {
       const { blob, headers } = await synthesizeWav({
         text: t,
         speed,
-        sid,
+        sid: sidRef.current,
         model_id: modelId,
         provider,
       });
@@ -157,12 +196,13 @@ export default function App() {
         RTF: headers["X-RTF"] || "-",
         采样率: headers["X-Sample-Rate"] || "-",
         模型: headers["X-Model-Id"] || modelId,
-        说话人: headers["X-Sid"] || String(sid),
+        说话人: headers["X-Sid"] || String(sidRef.current),
       });
       requestAnimationFrame(() => {
         audioRef.current?.play().catch(() => undefined);
       });
       message.success("合成完成");
+      // Refresh status metrics but KEEP selected speaker
       refresh().catch(() => undefined);
     } catch (e) {
       message.error(`合成失败: ${(e as Error).message}`);
@@ -181,7 +221,7 @@ export default function App() {
             <SoundOutlined style={{ color: token.colorPrimary, marginRight: 8 }} />
             fsatts 本地 TTS
           </Title>
-          <div className="sub">多模型 · 说话人切换 · 高并发插件服务（端口 19658）</div>
+          <div className="sub">中英混合 · 模型切换 · 高并发插件服务（端口 19658）</div>
         </div>
         <Space wrap>
           <Tag icon={<CloudServerOutlined />} color={status?.model_ready ? "success" : "warning"}>
@@ -201,7 +241,7 @@ export default function App() {
         <Col xs={24} lg={15}>
           <Card title="合成" bordered={false} className="panel" loading={loading}>
             <Paragraph type="secondary" style={{ marginTop: 0 }}>
-              切换模型或说话人不会自动合成，确认参数后点击「开始合成」。
+              切换模型或说话人不会自动合成，确认参数后点击「开始合成」。当前模型均支持中英混合。
             </Paragraph>
             <Space direction="vertical" size="middle" style={{ width: "100%" }}>
               <div>
@@ -209,24 +249,25 @@ export default function App() {
                 <Select
                   showSearch
                   style={{ width: "100%", marginTop: 6 }}
-                  value={modelId}
+                  value={readyModels.some((m) => m.id === modelId) ? modelId : undefined}
                   loading={switching}
                   optionFilterProp="label"
                   onChange={onModelChange}
-                  options={models.map((m) => ({
+                  placeholder={readyModels.length ? "选择已下载模型" : "暂无已下载模型"}
+                  options={readyModels.map((m) => ({
                     value: m.id,
-                    label: `${m.name}${m.ready ? "" : "（未下载）"}`,
-                    disabled: false,
+                    label: modelOptionLabel(m),
                   }))}
+                  notFoundContent="没有已下载的模型"
                 />
                 {currentModel && (
                   <div className="hint" style={{ marginTop: 6 }}>
+                    <Tag color="green">{langLabel(currentModel.lang)}</Tag>
                     {currentModel.description}
                     {currentModel.expected_sample_rate
                       ? ` · ${currentModel.expected_sample_rate} Hz`
                       : ""}
                     {` · ${currentModel.num_speakers} 说话人`}
-                    {!currentModel.ready && currentModel.missing?.length ? ` · 缺失文件请下载` : ""}
                   </div>
                 )}
               </div>
@@ -334,6 +375,12 @@ export default function App() {
                 <Text type="secondary">当前模型</Text>
                 <div>
                   <Text strong>{status?.model_name || status?.model_id || "-"}</Text>
+                  {currentModel?.lang ? (
+                    <>
+                      {" "}
+                      <Tag color="green">{langLabel(currentModel.lang)}</Tag>
+                    </>
+                  ) : null}
                 </div>
               </div>
               <div>
@@ -353,34 +400,20 @@ export default function App() {
               </div>
               <Divider style={{ margin: "4px 0" }} />
               <div>
-                <Text type="secondary">已注册模型</Text>
+                <Text type="secondary">可用模型（已下载）</Text>
                 <div className="stat-row" style={{ marginTop: 8 }}>
-                  {models.map((m) => (
+                  {readyModels.map((m) => (
                     <Tag
                       key={m.id}
-                      color={m.ready ? (m.id === modelId ? "blue" : "success") : "default"}
+                      color={m.id === modelId ? "blue" : "success"}
                       style={{ marginBottom: 4 }}
                     >
-                      {m.name}
-                      {!m.ready ? " · 未下载" : ""}
+                      {m.name} · {langLabel(m.lang)}
                     </Tag>
                   ))}
+                  {!readyModels.length && <Text type="secondary">暂无</Text>}
                 </div>
               </div>
-              <Alert
-                type="info"
-                showIcon
-                message="下载模型"
-                description={
-                  <span>
-                    <code>uv run python scripts/download_models.py --list</code>
-                    <br />
-                    <code>uv run python scripts/download_models.py --bundle</code>
-                    <br />
-                    <code>uv run python scripts/download_models.py --id theresa</code>
-                  </span>
-                }
-              />
             </Space>
           </Card>
         </Col>

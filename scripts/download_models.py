@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Download sherpa-onnx TTS models (GitHub release + mirrors)."""
+"""Download sherpa-onnx TTS models (GitHub release + mirrors, resumable)."""
 from __future__ import annotations
 
 import argparse
@@ -13,8 +13,10 @@ sys.path.insert(0, str(ROOT))
 
 from app.models_registry import MODEL_REGISTRY, model_files_ready, models_root  # noqa: E402
 
+# Prefer China-friendly mirrors first; GitHub last.
 MIRRORS = [
     "https://ghfast.top/https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models",
+    "https://mirror.ghproxy.com/https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models",
     "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models",
 ]
 
@@ -22,10 +24,14 @@ MIRRORS = [
 def _curl(url: str, dest: Path) -> bool:
     dest.parent.mkdir(parents=True, exist_ok=True)
     cmd = [
-        "curl", "-L", "--connect-timeout", "30", "--max-time", "1800",
-        "--retry", "3", "--retry-delay", "2", "-o", str(dest), url,
+        "curl", "-L", "-C", "-",
+        "--connect-timeout", "30", "--max-time", "3600",
+        "--retry", "5", "--retry-delay", "3", "--retry-all-errors",
+        "-o", str(dest), url,
     ]
-    print("GET", url)
+    print("GET", url, flush=True)
+    if dest.is_file() and dest.stat().st_size > 0:
+        print(f"  resume from {dest.stat().st_size/1e6:.1f} MB", flush=True)
     r = subprocess.run(cmd)
     return r.returncode == 0 and dest.is_file() and dest.stat().st_size > 1_000_000
 
@@ -41,12 +47,18 @@ def download_one(model_id: str, force: bool = False) -> bool:
         return True
     models_root().mkdir(parents=True, exist_ok=True)
     archive = models_root() / spec.archive
+    if force and archive.is_file():
+        archive.unlink()
     ok = False
     for base in MIRRORS:
         url = f"{base}/{spec.archive}"
         if _curl(url, archive):
             ok = True
             break
+        # bad tiny response (error HTML) — remove so next mirror starts clean
+        if archive.is_file() and archive.stat().st_size < 1_000_000:
+            print(f"  tiny/bad file ({archive.stat().st_size} B), clearing for next mirror")
+            archive.unlink(missing_ok=True)
     if not ok:
         print(f"FAIL download {model_id}")
         return False

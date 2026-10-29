@@ -35,3 +35,15 @@ ule.far ~172MB；磁盘紧张时只保留 onnx+lexicon+tokens+fst。
 ## 运行时环境变量
 
 见 README「并发」一节。
+
+
+## uv + huge models
+
+Packaging scripts use uv sync --extra dev and uv run python -m PyInstaller (no plain pip/venv required).
+
+Huge multi-speaker directories skipped unless INCLUDE_HUGE_MODELS=1:
+- vits-zh-hf-theresa
+- vits-zh-hf-eula
+- vits-zh-hf-fanchen-C
+
+Frontend assets come from web/dist (built automatically if missing).

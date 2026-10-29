@@ -12,8 +12,22 @@ createRoot(document.getElementById("root")!).render(
       theme={{
         token: {
           colorPrimary: "#1677ff",
-          borderRadius: 10,
+          borderRadius: 8,
           fontFamily: '"Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif',
+          controlHeight: 36,
+          fontSize: 14,
+          colorText: "#1f2937",
+          colorTextSecondary: "#6b7280",
+          colorBorder: "#e8ecf1",
+          colorBorderSecondary: "#eef2f7",
+        },
+        components: {
+          Card: {
+            headerFontSize: 15,
+          },
+          Form: {
+            itemMarginBottom: 16,
+          },
         },
       }}
     >

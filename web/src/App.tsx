@@ -1,21 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  Alert,
   Button,
   Card,
   Col,
-  Divider,
-  Flex,
   Input,
   Row,
   Select,
   Slider,
-  Space,
   Switch,
   Tag,
   Typography,
   App as AntApp,
-  theme,
 } from "antd";
 import {
   CloudServerOutlined,
@@ -38,7 +33,7 @@ import {
 } from "./api";
 
 const { TextArea } = Input;
-const { Title, Text, Paragraph } = Typography;
+const { Text, Paragraph } = Typography;
 
 const SAMPLE = "欢迎使用本地中英混合语音合成。Hello from fsatts — Chinese and English mixed TTS.";
 
@@ -106,7 +101,6 @@ class StreamPlayer {
 
 export default function App() {
   const { message } = AntApp.useApp();
-  const { token } = theme.useToken();
 
   const [status, setStatus] = useState<StatusPayload | null>(null);
   const [loading, setLoading] = useState(true);
@@ -339,14 +333,16 @@ export default function App() {
   return (
     <div className="app-shell">
       <header className="app-header">
-        <div>
-          <Title level={2} style={{ margin: 0 }}>
-            <SoundOutlined style={{ color: token.colorPrimary, marginRight: 8 }} />
-            fsatts 本地 TTS
-          </Title>
-          <div className="sub">中英混合 · 模型切换 · 高并发插件服务（端口 19658）</div>
+        <div className="brand">
+          <span className="brand-icon" aria-hidden>
+            <SoundOutlined />
+          </span>
+          <div>
+            <h1 className="brand-title">fsatts 本地 TTS</h1>
+            <div className="sub">中英混合 · 模型切换 · 高并发插件服务（端口 19658）</div>
+          </div>
         </div>
-        <Space wrap>
+        <div className="header-meta">
           <Tag icon={<CloudServerOutlined />} color={status?.model_ready ? "success" : "warning"}>
             {status?.model_ready ? "模型就绪" : "模型未就绪"}
           </Tag>
@@ -357,133 +353,160 @@ export default function App() {
           <Button icon={<ReloadOutlined />} onClick={() => refresh()} loading={loading}>
             刷新
           </Button>
-        </Space>
+        </div>
       </header>
 
-      <Row gutter={[16, 16]}>
-        <Col xs={24} lg={15}>
+      <Row gutter={[18, 18]} className="app-main" align="stretch">
+        <Col xs={24} lg={15} xl={16}>
           <Card title="合成" bordered={false} className="panel" loading={loading}>
-            <Paragraph type="secondary" style={{ marginTop: 0 }}>
-              切换模型或说话人不会自动合成；确认参数后点击「开始合成」。当前可选模型均支持中英混合。
-            </Paragraph>
-            <Space direction="vertical" size="middle" style={{ width: "100%" }}>
-              <Row gutter={[16, 12]}>
-                <Col xs={24} md={12}>
-                  <Text strong>模型</Text>
-                  <Select
-                    showSearch
-                    style={{ width: "100%", marginTop: 6 }}
-                    value={readyModels.some((m) => m.id === modelId) ? modelId : undefined}
-                    loading={switching}
-                    optionFilterProp="label"
-                    onChange={onModelChange}
-                    placeholder={readyModels.length ? "选择已下载模型" : "暂无已下载模型"}
-                    options={readyModels.map((m) => ({
-                      value: m.id,
-                      label: modelOptionLabel(m),
-                    }))}
-                    notFoundContent="没有已下载的模型"
-                  />
-                  {currentModel && (
-                    <div className="hint" style={{ marginTop: 6 }}>
-                      <Tag color="green">{langLabel(currentModel.lang)}</Tag>
-                      {currentModel.supports_stream === false ? (
-                        <Tag color="default">不支持流式</Tag>
-                      ) : (
-                        <Tag color="blue">支持流式</Tag>
-                      )}
-                      {currentModel.description}
-                      {currentModel.expected_sample_rate
-                        ? ` · ${currentModel.expected_sample_rate} Hz`
-                        : ""}
-                      {` · ${currentModel.num_speakers} 说话人`}
-                    </div>
-                  )}
-                </Col>
-                <Col xs={24} md={12}>
-                  <Text strong>说话人</Text>
-                  <Select
-                    showSearch
-                    style={{ width: "100%", marginTop: 6 }}
-                    value={sid}
-                    onChange={onSpeakerChange}
-                    optionFilterProp="label"
-                    options={speakers.map((s) => ({
-                      value: s.sid,
-                      label: `${s.name} (sid=${s.sid})${s.note ? ` · ${s.note}` : ""}`,
-                    }))}
-                    placeholder="选择说话人"
-                  />
-                </Col>
-              </Row>
+            <div className="panel-stack">
+              <Paragraph className="intro" type="secondary">
+                切换模型或说话人不会自动合成；确认参数后点击「开始合成」。当前可选模型均支持中英混合。
+              </Paragraph>
 
-              <Row gutter={[16, 12]}>
+              <Row gutter={[16, 14]}>
                 <Col xs={24} md={12}>
-                  <Flex justify="space-between" align="center">
-                    <Text strong>边合成边播放</Text>
-                    <Switch
-                      checked={streamPlay && canStream}
-                      disabled={!canStream || busy}
-                      onChange={setStreamPlay}
-                      checkedChildren="开"
-                      unCheckedChildren="关"
-                    />
-                  </Flex>
-                  <div className="hint" style={{ marginTop: 4 }}>
-                    {canStream
-                      ? streamPlay
-                        ? "开启：通过 WebSocket 流式合成并实时播放"
-                        : "关闭：完整合成后再播放 WAV"
-                      : "当前模型不支持流式，已禁用该开关"}
+                  <div className="field">
+                    <div className="field-label">
+                      <span className="field-label-text">模型</span>
+                    </div>
+                    <div className="field-control">
+                      <Select
+                        showSearch
+                        style={{ width: "100%" }}
+                        value={readyModels.some((m) => m.id === modelId) ? modelId : undefined}
+                        loading={switching}
+                        optionFilterProp="label"
+                        onChange={onModelChange}
+                        placeholder={readyModels.length ? "选择已下载模型" : "暂无已下载模型"}
+                        options={readyModels.map((m) => ({
+                          value: m.id,
+                          label: modelOptionLabel(m),
+                        }))}
+                        notFoundContent="没有已下载的模型"
+                      />
+                    </div>
+                    {currentModel ? (
+                      <div className="model-meta">
+                        <Tag color="green">{langLabel(currentModel.lang)}</Tag>
+                        {currentModel.supports_stream === false ? (
+                          <Tag>不支持流式</Tag>
+                        ) : (
+                          <Tag color="blue">支持流式</Tag>
+                        )}
+                        <span className="meta-desc">
+                          {currentModel.description}
+                          {currentModel.expected_sample_rate
+                            ? ` · ${currentModel.expected_sample_rate} Hz`
+                            : ""}
+                          {` · ${currentModel.num_speakers} 说话人`}
+                        </span>
+                      </div>
+                    ) : null}
                   </div>
                 </Col>
                 <Col xs={24} md={12}>
-                  <Text strong>推理后端</Text>
-                  <Select
-                    style={{ width: "100%", marginTop: 6 }}
-                    value={provider}
-                    onChange={onProviderChange}
-                    options={[
-                      { value: "cpu", label: "CPU" },
-                      {
-                        value: "cuda",
-                        label: status?.cuda_available ? "CUDA" : "CUDA（不可用）",
-                        disabled: !status?.cuda_available,
-                      },
-                    ]}
-                  />
+                  <div className="field">
+                    <div className="field-label">
+                      <span className="field-label-text">说话人</span>
+                    </div>
+                    <div className="field-control">
+                      <Select
+                        showSearch
+                        style={{ width: "100%" }}
+                        value={sid}
+                        onChange={onSpeakerChange}
+                        optionFilterProp="label"
+                        options={speakers.map((s) => ({
+                          value: s.sid,
+                          label: `${s.name} (sid=${s.sid})${s.note ? ` · ${s.note}` : ""}`,
+                        }))}
+                        placeholder="选择说话人"
+                      />
+                    </div>
+                  </div>
                 </Col>
               </Row>
 
-              <div>
-                <Flex justify="space-between" align="center">
-                  <Text strong>语速 {speed.toFixed(2)}×</Text>
-                  <Text type="secondary">0.5 – 2.0</Text>
-                </Flex>
+              <Row gutter={[16, 14]} className="config-row">
+                <Col xs={24} md={12}>
+                  <div className="field">
+                    <div className="field-label">
+                      <span className="field-label-text">边合成边播放</span>
+                    </div>
+                    <div className="field-control">
+                      <Switch
+                        checked={streamPlay && canStream}
+                        disabled={!canStream || busy}
+                        onChange={setStreamPlay}
+                        checkedChildren="开"
+                        unCheckedChildren="关"
+                      />
+                    </div>
+                    <p className="field-hint">
+                      {canStream
+                        ? streamPlay
+                          ? "开启后通过 WebSocket 流式合成并实时播放"
+                          : "关闭后完整合成再播放 WAV"
+                        : "当前模型不支持流式，开关已禁用"}
+                    </p>
+                  </div>
+                </Col>
+                <Col xs={24} md={12}>
+                  <div className="field">
+                    <div className="field-label">
+                      <span className="field-label-text">推理后端</span>
+                    </div>
+                    <div className="field-control">
+                      <Select
+                        style={{ width: "100%" }}
+                        value={provider}
+                        onChange={onProviderChange}
+                        options={[
+                          { value: "cpu", label: "CPU" },
+                          {
+                            value: "cuda",
+                            label: status?.cuda_available ? "CUDA" : "CUDA（不可用）",
+                            disabled: !status?.cuda_available,
+                          },
+                        ]}
+                      />
+                    </div>
+                  </div>
+                </Col>
+              </Row>
+
+              <div className="field">
+                <div className="field-label">
+                  <span className="field-label-text">语速</span>
+                  <span className="field-label-extra">{speed.toFixed(2)}× · 0.5 – 2.0</span>
+                </div>
                 <Slider
                   min={0.5}
                   max={2}
                   step={0.05}
                   value={speed}
                   onChange={setSpeed}
+                  tooltip={{ formatter: (v) => `${Number(v).toFixed(2)}×` }}
                   marks={{ 0.5: "0.5", 1: "1.0", 1.5: "1.5", 2: "2.0" }}
                 />
               </div>
 
-              <div>
-                <Text strong>文本</Text>
+              <div className="field">
+                <div className="field-label">
+                  <span className="field-label-text">文本</span>
+                </div>
                 <TextArea
                   rows={6}
                   value={text}
                   onChange={(e) => setText(e.target.value)}
                   maxLength={2000}
                   showCount
-                  style={{ marginTop: 6 }}
                   placeholder="输入中文、英文或中英混合文本"
                 />
               </div>
 
-              <Flex gap={12} wrap="wrap" align="center">
+              <div className="action-row">
                 <Button
                   type="primary"
                   size="large"
@@ -494,20 +517,20 @@ export default function App() {
                 >
                   开始合成
                 </Button>
-                {progress != null && busy && (
+                {progress != null && busy ? (
                   <Text type="secondary">进度 {(progress * 100).toFixed(0)}%</Text>
-                )}
-              </Flex>
+                ) : null}
+              </div>
 
               <div className="audio-box">
                 {audioUrl ? (
                   <audio ref={audioRef} controls src={audioUrl} />
                 ) : (
-                  <Alert type="info" showIcon message="合成结果将在此播放" />
+                  <div className="audio-empty">合成结果将在此播放</div>
                 )}
               </div>
 
-              {Object.keys(metrics).length > 0 && (
+              {Object.keys(metrics).length > 0 ? (
                 <div className="metrics">
                   {Object.entries(metrics).map(([k, v]) => (
                     <div className="metric" key={k}>
@@ -516,18 +539,18 @@ export default function App() {
                     </div>
                   ))}
                 </div>
-              )}
-            </Space>
+              ) : null}
+            </div>
           </Card>
         </Col>
 
-        <Col xs={24} lg={9}>
+        <Col xs={24} lg={9} xl={8}>
           <Card title="服务状态" bordered={false} className="panel" loading={loading}>
-            <Space direction="vertical" style={{ width: "100%" }} size="middle">
-              <div>
-                <Text type="secondary">当前模型</Text>
-                <div>
-                  <Text strong>{status?.model_name || status?.model_id || "-"}</Text>
+            <div className="status-stack">
+              <div className="status-block">
+                <div className="status-label">当前模型</div>
+                <div className="status-value">
+                  {status?.model_name || status?.model_id || "-"}
                   {currentModel?.lang ? (
                     <>
                       {" "}
@@ -536,38 +559,39 @@ export default function App() {
                   ) : null}
                 </div>
               </div>
-              <div>
-                <Text type="secondary">采样率 / 说话人数</Text>
-                <div>
+
+              <div className="status-block">
+                <div className="status-label">采样率 / 说话人数</div>
+                <div className="status-value">
                   {status?.sample_rate ?? "-"} Hz · {status?.num_speakers ?? "-"} 人
                 </div>
               </div>
-              <Divider style={{ margin: "4px 0" }} />
-              <div>
-                <Text type="secondary">并发</Text>
-                <Paragraph className="hint" style={{ marginBottom: 0 }}>
-                  引擎池大小 <b>{conc?.pool_size}</b>，最大在途请求 <b>{conc?.max_inflight}</b>
-                  。环境变量 <code>TTS_ENGINE_POOL_SIZE</code> / <code>TTS_MAX_INFLIGHT</code>{" "}
-                  可调。队列满时返回 503。
-                </Paragraph>
+
+              <hr className="status-divider" />
+
+              <div className="status-block">
+                <div className="status-label">并发</div>
+                <p className="status-note">
+                  引擎池大小 <b>{conc?.pool_size ?? "-"}</b>，最大在途请求{" "}
+                  <b>{conc?.max_inflight ?? "-"}</b>。可用环境变量 <code>TTS_ENGINE_POOL_SIZE</code>{" "}
+                  / <code>TTS_MAX_INFLIGHT</code> 调整；队列满时返回 503。
+                </p>
               </div>
-              <Divider style={{ margin: "4px 0" }} />
-              <div>
-                <Text type="secondary">可用模型（已下载）</Text>
-                <div className="stat-row" style={{ marginTop: 8 }}>
+
+              <hr className="status-divider" />
+
+              <div className="status-block">
+                <div className="status-label">可用模型（已下载）</div>
+                <div className="model-tags">
                   {readyModels.map((m) => (
-                    <Tag
-                      key={m.id}
-                      color={m.id === modelId ? "blue" : "success"}
-                      style={{ marginBottom: 4 }}
-                    >
+                    <Tag key={m.id} color={m.id === modelId ? "blue" : "success"}>
                       {m.name} · {langLabel(m.lang)}
                     </Tag>
                   ))}
-                  {!readyModels.length && <Text type="secondary">暂无</Text>}
+                  {!readyModels.length ? <Text type="secondary">暂无</Text> : null}
                 </div>
               </div>
-            </Space>
+            </div>
           </Card>
         </Col>
       </Row>

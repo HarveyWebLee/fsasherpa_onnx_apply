@@ -1,9 +1,11 @@
-.venv/
+﻿.venv/
 __pycache__/
 *.py[cod]
 *.egg-info/
 /dist/
 /build/
+# PyInstaller leftover specs (build scripts use CLI flags)
+*.spec
 outputs/*.wav
 outputs/*.log
 outputs/_*.py
@@ -12,8 +14,14 @@ outputs/wheels/
 web/node_modules/
 *.bak
 .DS_Store
-models/**
-!models/.gitkeep
+# Keep models tracked (runtime weights via Git LFS for *.onnx)
+# Ignore only download debris / archives under models/
+models/**/*.tar.bz2
+models/**/*.tar.gz
+models/**/*.zip
+models/**/*.bak
+models/**/.cache/
+models/**/*.incomplete
 outputs/*
 !outputs/.gitkeep
 app/*.bak

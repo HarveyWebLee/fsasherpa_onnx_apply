@@ -1,4 +1,4 @@
-"""Model registry for multi-speaker sherpa-onnx TTS models."""
+﻿"""Model registry for multi-speaker sherpa-onnx TTS models."""
 
 from __future__ import annotations
 
@@ -142,7 +142,7 @@ MODEL_REGISTRY: dict[str, ModelSpec] = {
         expected_sample_rate=8000,
         tags=("multi", "zh", "fast"),
         speakers=_spk_range(174),
-        onnx_name="model.onnx",
+        onnx_name="model.int8.onnx",
         bundle_default=True,
         archive="vits-icefall-zh-aishell3.tar.bz2",
         archive_mb=30,

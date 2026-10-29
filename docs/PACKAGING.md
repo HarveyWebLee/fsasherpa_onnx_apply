@@ -12,7 +12,7 @@ cd web; pnpm install --frozen-lockfile; pnpm run build; cd ..
 ## 模型策略
 
 - **默认打进包**（`bundle_default=true`）：Melo 44k / Melo 8k（中英混合）
-- **可选**：Kokoro multi-lang v1.1 int8（`kokoro-zh-en-v1_1`，103 说话人，需先下载）
+- **可选**：Kokoro multi-lang v1.1 **int8**（`kokoro-zh-en-v1_1`）或 **fp32**（`kokoro-zh-en-v1_1-fp32`，约 348MB 压缩，音质更干净，按需下载，默认不打包）
 - 跳过模型：`INCLUDE_MODELS=0` 或打包脚本 `-SkipModels`
 - 打包前可运行：`uv run python scripts/download_models.py --bundle`
 
@@ -22,7 +22,7 @@ cd web; pnpm install --frozen-lockfile; pnpm run build; cd ..
 
 1. `uv sync`（或已有 `.venv`）
 2. `web/dist` 已构建
-3. 需要的模型在 `models/`（至少两套 Melo；Kokoro 可选）
+3. 需要的模型在 `models/`（至少两套 Melo；Kokoro int8/fp32 可选）
 
 ```powershell
 .\scripts\build\windows.ps1

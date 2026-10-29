@@ -30,6 +30,7 @@ HF_REPOS: dict[str, str] = {
     "melo-zh-en-8k": "csukuangfj/vits-melo-tts-zh_en-8k",
     # Prefer GitHub tarball for Kokoro (includes espeak-ng-data tree).
     "kokoro-zh-en-v1_1": "csukuangfj/kokoro-int8-multi-lang-v1_1",
+    "kokoro-zh-en-v1_1-fp32": "csukuangfj/kokoro-multi-lang-v1_1",
 }
 
 HF_BASES = [

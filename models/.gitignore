@@ -5,3 +5,6 @@
 *.bak
 .cache/
 *.incomplete
+
+# Kokoro fp32 (~326MB onnx + assets); download via scripts/download_models.py
+/kokoro-multi-lang-v1_1/

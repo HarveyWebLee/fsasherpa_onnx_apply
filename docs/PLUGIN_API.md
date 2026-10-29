@@ -52,7 +52,8 @@ CORS：TTS_CORS_ORIGINS（默认 *）
 | model_id | lang | 英文 | 中英混合 |
 |---|---|---|---|
 | `melo-zh-en-44k` / `melo-zh-en-8k` | `zh+en` | 支持 | 支持 |
-| `kokoro-zh-en-v1_1` | `zh+en` | 支持 | 支持（103 说话人） |
+| `kokoro-zh-en-v1_1` | `zh+en` | 支持 | 支持（103 说话人，int8） |
+| `kokoro-zh-en-v1_1-fp32` | `zh+en` | 支持 | 支持（103 说话人，fp32，更干净） |
 
 `GET /api/models` 与 `/api/status` 返回的每条模型含 `lang` 字段（`zh+en`）。
 默认 HTTP 端口：**19658**（环境变量 `TTS_PORT`）。

@@ -71,8 +71,8 @@ if ($wantModels) {
 if (-not (Test-Path "web\dist\index.html")) {
   Write-Host "Building frontend (web/dist missing)..."
   Push-Location web
-  npm ci
-  npm run build
+  pnpm install --frozen-lockfile
+  pnpm run build
   Pop-Location
 }
 

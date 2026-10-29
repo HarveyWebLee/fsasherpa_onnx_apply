@@ -59,7 +59,7 @@ fi
 
 if [[ ! -f web/dist/index.html ]]; then
   echo "Building frontend (web/dist missing)..."
-  (cd web && npm ci && npm run build)
+  (cd web && pnpm install --frozen-lockfile && pnpm run build)
 fi
 
 uv run python -m PyInstaller --noconfirm --clean --name fsatts --onedir --console \

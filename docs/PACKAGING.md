@@ -4,7 +4,7 @@
 
 `powershell
 uv sync
-cd web; npm ci; npm run build; cd ..
+cd web; pnpm install --frozen-lockfile; pnpm run build; cd ..
 `
 
 安装包需包含 web/dist（或运行时再构建）。

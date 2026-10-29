@@ -1,4 +1,4 @@
-.venv/
+﻿.venv/
 __pycache__/
 *.py[cod]
 *.egg-info/
@@ -20,3 +20,6 @@ outputs/*
 app/*.bak
 !web/dist/
 !web/dist/**
+web/package-lock.json
+
+

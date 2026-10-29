@@ -17,7 +17,7 @@
 cd E:\WORK\CODE\fsasherpa-onnx-test
 uv sync
 # 构建前端（首次 / 前端变更后）
-cd web; npm install; npm run build; cd ..
+cd web; pnpm install; pnpm run build; cd ..
 # 下载默认打包模型（Melo + zh-ll + aishell3；大模型按需）
 uv run python scripts/download_models.py --bundle
 # 启动
@@ -77,23 +77,23 @@ uv run python scripts/download_models.py --hf-only --id zh-ll
 # 终端 1：后端
 uv run python -m uvicorn app.main:app --host 127.0.0.1 --port 19658
 # 终端 2：Vite
-cd web; npm run dev
+cd web; pnpm run dev
 ```
 
 
 ## 代码检查与格式化
 
-### 前端（`web/`，Prettier + ESLint + TypeScript）
+### 前端（`web/`，Prettier + ESLint + TypeScript，包管理用 pnpm）
 
 ```powershell
 cd web
-npm install
-npm run format        # Prettier 写回
-npm run lint          # ESLint
-npm run lint:fix     # ESLint 自动修复
-npm run typecheck     # tsc --noEmit
-npm run check         # typecheck + lint + format:check
-npm run build         # 先 typecheck 再 vite build
+pnpm install
+pnpm run format        # Prettier 写回
+pnpm run lint          # ESLint
+pnpm run lint:fix     # ESLint 自动修复
+pnpm run typecheck     # tsc --noEmit
+pnpm run check         # typecheck + lint + format:check
+pnpm run build         # 先 typecheck 再 vite build
 ```
 
 配置：`web/.prettierrc.json`、`web/eslint.config.js`（flat，React 19 + TS + Vite）。
@@ -119,4 +119,5 @@ models/              已入库（*.onnx 走 Git LFS；压缩包等杂项见 mode
 docs/                PLUGIN_API / PACKAGING
 pyproject.toml       uv 项目定义
 uv.lock              锁定依赖
+web/pnpm-lock.yaml   前端锁定依赖
 ```

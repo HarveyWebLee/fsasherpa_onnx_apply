@@ -2,8 +2,8 @@
 __pycache__/
 *.py[cod]
 *.egg-info/
-dist/
-build/
+/dist/
+/build/
 outputs/*.wav
 outputs/*.log
 outputs/_*.py
@@ -17,4 +17,5 @@ models/**
 outputs/*
 !outputs/.gitkeep
 app/*.bak
-
+!web/dist/
+!web/dist/**

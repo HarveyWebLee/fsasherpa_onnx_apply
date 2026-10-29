@@ -306,7 +306,8 @@ $env:TTS_MODEL_DIR = "$PWD\models\vits-melo-tts-zh_en-8k"
 
 本仓库可作为**本地插件服务**：默认监听 `0.0.0.0:19658`，带 CORS，供其他浏览器页面通过 HTTP/WebSocket 调用 TTS。
 
-- 开发启动：`./run_web.sh` 或 `.un_web.ps1`（可用环境变量 `TTS_HOST` / `TTS_PORT` / `TTS_CORS_ORIGINS`）
+- 开发启动：`./run_web.sh` 或 `.
+un_web.ps1`（可用环境变量 `TTS_HOST` / `TTS_PORT` / `TTS_CORS_ORIGINS`）
 - API 与跨域示例：[docs/PLUGIN_API.md](docs/PLUGIN_API.md)
 - 健康检查：`GET /api/health`
 - 多平台安装包构建：[docs/PACKAGING.md](docs/PACKAGING.md)
@@ -322,7 +323,17 @@ await fetch("http://127.0.0.1:19658/api/tts", {
 
 ## 跨平台打包
 
-本地插件服务（Windows / Linux amd64 / 麒麟 V10 arm64）方案见 [docs/PACKAGING.md](docs/PACKAGING.md)；骨架脚本在 `scripts/build/`。开发默认端口 **19658**。
+本地插件服务（Windows / Linux amd64 / 麒麟 V10 arm64）方案见 [docs/PACKAGING.md](docs/PACKAGING.md)；脚本在 `scripts/build/`。开发默认端口 **19658**。
+
+Windows 一键包（默认把仓库 `models/` 里已有模型打进 zip）：
+
+```powershell
+.\scripts\build\windows.ps1
+# 解压后可直接 run.bat（构建时若 models 已存在则无需再拷）
+# 更小的无模型包：.\scripts\build\windows.ps1 -SkipModels
+```
+
+产物：`dist/fsatts-windows-x64.zip`。可用 `TTS_MODELS_ROOT` 覆盖包内模型路径。
 
 ## 语速与语音角色
 

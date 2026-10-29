@@ -1,9 +1,11 @@
 fsatts — 本地 TTS 插件服务
 ========================
 
-1. 将 models/ 放到本目录（或设置 TTS_MODELS_ROOT）：
-   - models/vits-melo-tts-zh_en/     (44.1k)
-   - models/vits-melo-tts-zh_en-8k/  (可选 8k)
+1. 模型：
+   - 完整安装包通常已含 models/（如 vits-melo-tts-zh_en、可选 8k）。
+   - 若 models/ 为空，请自行放入模型，或设置 TTS_MODELS_ROOT 指向外部目录：
+     - models/vits-melo-tts-zh_en/     (44.1k)
+     - models/vits-melo-tts-zh_en-8k/  (可选 8k)
 
 2. 启动：
    Windows:  run.bat

@@ -1,0 +1,7 @@
+# Only download debris / archives - keep ONNX weights and lexicons tracked
+*.tar.bz2
+*.tar.gz
+*.zip
+*.bak
+.cache/
+*.incomplete

@@ -86,7 +86,7 @@ cd web; npm run dev
 app/                 FastAPI + TTS 引擎池
 web/                 React 19 + Ant Design 6（构建产物 web/dist）
 scripts/             下载 / 打包 / 压测
-models/              模型目录（gitignore，按需下载）
+models/              已入库（*.onnx 走 Git LFS；压缩包等杂项见 models/.gitignore）
 docs/                PLUGIN_API / PACKAGING
 pyproject.toml       uv 项目定义
 uv.lock              锁定依赖

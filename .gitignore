@@ -1,4 +1,4 @@
-﻿.venv/
+.venv/
 __pycache__/
 *.py[cod]
 *.egg-info/
@@ -14,14 +14,7 @@ outputs/wheels/
 web/node_modules/
 *.bak
 .DS_Store
-# Keep models tracked (runtime weights via Git LFS for *.onnx)
-# Ignore only download debris / archives under models/
-models/**/*.tar.bz2
-models/**/*.tar.gz
-models/**/*.zip
-models/**/*.bak
-models/**/.cache/
-models/**/*.incomplete
+# models/ is tracked (*.onnx via Git LFS). Debris rules live in models/.gitignore
 outputs/*
 !outputs/.gitkeep
 app/*.bak

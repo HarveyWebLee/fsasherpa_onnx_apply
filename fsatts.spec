@@ -1,7 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_all
 
-datas = [('static', 'static')]
+datas = [('web/dist', 'web/dist')]
 binaries = []
 hiddenimports = ['app', 'app.main', 'app.tts_engine', 'uvicorn.logging', 'uvicorn.loops.auto', 'uvicorn.protocols.http.auto', 'uvicorn.protocols.websockets.auto', 'uvicorn.lifespan.on', 'soundfile', 'numpy']
 tmp_ret = collect_all('sherpa_onnx')

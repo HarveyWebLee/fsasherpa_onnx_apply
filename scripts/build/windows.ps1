@@ -82,7 +82,6 @@ if (-not (Test-Path "web\dist\index.html")) {
   --name fsatts `
   --onedir `
   --console `
-  --add-data "static;static" `
   --add-data "web/dist;web/dist" `
   --collect-all sherpa_onnx `
   --hidden-import app `

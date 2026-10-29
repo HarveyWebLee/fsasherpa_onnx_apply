@@ -11,7 +11,6 @@ import {
   Select,
   Slider,
   Space,
-  Switch,
   Tag,
   Typography,
   App as AntApp,
@@ -58,7 +57,6 @@ export default function App() {
   const [switching, setSwitching] = useState(false);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [metrics, setMetrics] = useState<Record<string, string>>({});
-  const [streamMode, setStreamMode] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const switchGen = useRef(0);
 
@@ -315,11 +313,6 @@ export default function App() {
                 >
                   开始合成
                 </Button>
-                <Space>
-                  <Text type="secondary">流式预览</Text>
-                  <Switch checked={streamMode} onChange={setStreamMode} disabled />
-                  <Text type="secondary">（HTTP WAV 已稳定；WS 流式保留 API）</Text>
-                </Space>
               </Flex>
 
               <div className="audio-box">

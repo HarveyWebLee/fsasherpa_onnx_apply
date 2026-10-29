@@ -63,7 +63,7 @@ if [[ ! -f web/dist/index.html ]]; then
 fi
 
 uv run python -m PyInstaller --noconfirm --clean --name fsatts --onedir --console \
-  --add-data "static:static" --add-data "web/dist:web/dist" --collect-all sherpa_onnx \
+  --add-data "web/dist:web/dist" --collect-all sherpa_onnx \
   --hidden-import app --hidden-import app.main --hidden-import app.tts_engine \
   --hidden-import app.models_registry \
   --hidden-import uvicorn.logging --hidden-import uvicorn.loops.auto \

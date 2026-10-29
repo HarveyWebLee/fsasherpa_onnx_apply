@@ -43,7 +43,7 @@ def main() -> int:
         parser.error("请提供 text 或 --example")
 
     if not engine.model_ready():
-        print("模型未就绪，请先运行: .\\scripts\\download_model.ps1")
+        print("模型未就绪，请先运行: uv run python scripts/download_models.py --bundle")
         print("缺失:", engine.missing_files())
         return 2
 

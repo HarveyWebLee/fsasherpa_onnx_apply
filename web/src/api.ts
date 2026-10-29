@@ -125,7 +125,3 @@ export async function synthesizeWav(params: SynthParams): Promise<{
   return { blob: await res.blob(), headers };
 }
 
-export function wsUrl(): string {
-  const proto = location.protocol === "https:" ? "wss:" : "ws:";
-  return `${proto}//${location.host}/ws/tts`;
-}

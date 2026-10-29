@@ -33,25 +33,19 @@ def _resolve_static_dir() -> Path:
         p = Path(env)
         if p.is_dir():
             return p
-    # Prefer React production build
+    # React production build (Vite)
     web_dist = ROOT / "web" / "dist"
     if (web_dist / "index.html").is_file():
         return web_dist
-    cand = ROOT / "static"
-    if cand.is_dir():
-        return cand
     import sys
 
     if getattr(sys, "frozen", False):
         meipass = Path(getattr(sys, "_MEIPASS", Path(sys.executable).resolve().parent))
-        for rel in ("web/dist", "static"):
-            if (meipass / rel).is_dir():
-                return meipass / rel
-        beside = Path(sys.executable).resolve().parent
-        for rel in ("web/dist", "static"):
-            if (beside / rel).is_dir():
-                return beside / rel
-    return cand
+        for base in (meipass, Path(sys.executable).resolve().parent):
+            cand = base / "web" / "dist"
+            if cand.is_dir():
+                return cand
+    return web_dist
 
 
 STATIC_DIR = _resolve_static_dir()
@@ -117,26 +111,17 @@ app.add_middleware(
     ],
 )
 
-# Assets under /assets for Vite build; /static for legacy
+# Vite assets under /assets
 if STATIC_DIR.is_dir():
     assets = STATIC_DIR / "assets"
     if assets.is_dir():
         app.mount("/assets", StaticFiles(directory=str(assets)), name="assets")
-    legacy = ROOT / "static"
-    if legacy.is_dir() and legacy.resolve() != STATIC_DIR.resolve():
-        app.mount("/static", StaticFiles(directory=str(legacy)), name="static")
-    elif (STATIC_DIR / "static").is_dir():
-        app.mount("/static", StaticFiles(directory=str(STATIC_DIR / "static")), name="static")
-    else:
-        # Vite may put everything in dist; also serve whole dist for favicon etc.
-        pass
 
 
 class SynthRequest(BaseModel):
     text: str = Field(..., min_length=1, max_length=2000)
     speed: float = Field(1.0, ge=0.5, le=2.0)
     sid: int = Field(0, ge=0)
-    mode: Optional[str] = Field(default="mixed")
     provider: Optional[str] = None
     model_id: Optional[str] = None
 
@@ -171,10 +156,6 @@ def _http_from_exc(exc: Exception) -> HTTPException:
 def index() -> FileResponse:
     index_path = STATIC_DIR / "index.html"
     if not index_path.is_file():
-        # fallback legacy
-        legacy = ROOT / "static" / "index.html"
-        if legacy.is_file():
-            return FileResponse(legacy)
         raise HTTPException(status_code=404, detail="缺少前端 index.html，请先构建 web/")
     return FileResponse(index_path)
 

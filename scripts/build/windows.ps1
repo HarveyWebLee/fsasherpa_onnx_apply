@@ -3,6 +3,8 @@
 #   .\scripts\build\windows.ps1              # include models/ when present (default)
 #   .\scripts\build\windows.ps1 -SkipModels  # smaller CI/dev package without models
 #   $env:INCLUDE_MODELS='0'; .\scripts\build\windows.ps1
+#   $env:INCLUDE_HUGE_MODELS='1'; .\scripts\build\windows.ps1  # also pack theresa/eula/fanchen
+# Requires: uv (https://docs.astral.sh/uv/)
 param(
   [switch]$SkipModels,
   [switch]$IncludeModels
@@ -11,8 +13,11 @@ $ErrorActionPreference = "Stop"
 $Root = Resolve-Path (Join-Path $PSScriptRoot "..\..")
 Set-Location $Root
 
-$venvPy = Join-Path $Root ".venv\Scripts\python.exe"
-if (-not (Test-Path $venvPy)) { throw "Missing .venv" }
+if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
+  throw "uv not found. Install: https://docs.astral.sh/uv/"
+}
+Write-Host "uv sync --extra dev ..."
+& uv sync --extra dev
 
 # Default: bundle models when repo models/ has content.
 # -SkipModels or INCLUDE_MODELS=0 => empty models/ only
@@ -25,7 +30,6 @@ elseif ($null -ne $envFlag -and $envFlag -ne "") {
   $wantModels = ($envFlag -notin @("0", "false", "False", "no", "NO"))
 }
 
-& $venvPy -m pip install -q "pyinstaller>=6.0"
 $entry = Join-Path $Root "scripts\build\_entrypoint_fsatts.py"
 $assets = Join-Path $Root "scripts\build\package_assets"
 $srcModels = Join-Path $Root "models"
@@ -46,16 +50,15 @@ function Get-ModelDirs([string]$ModelsRoot) {
       $null -ne $onnx -and $hasLex -and $hasTok
     }
 }
-}
 
 $modelDirs = @(Get-ModelDirs $srcModels)
 
 if ($wantModels) {
   if ($modelDirs.Count -eq 0) {
     if ($IncludeModels -or ($envFlag -in @("1", "true", "True", "yes", "YES"))) {
-      throw "INCLUDE_MODELS requested but no usable model dirs under $srcModels (need model.onnx/int8 + lexicon.txt + tokens.txt)"
+      throw "INCLUDE_MODELS requested but no usable model dirs under $srcModels"
     }
-    Write-Host "WARN: models/ has no usable TTS model dirs; packaging empty models/ (use download_model.ps1 first for a full zip)."
+    Write-Host "WARN: models/ has no usable TTS model dirs; packaging empty models/."
     $wantModels = $false
   } else {
     $names = ($modelDirs | ForEach-Object { $_.Name }) -join ", "
@@ -65,7 +68,15 @@ if ($wantModels) {
   Write-Host "Building onedir bundle (CPU). Models SKIPPED (-SkipModels / INCLUDE_MODELS=0)."
 }
 
-& $venvPy -m PyInstaller `
+if (-not (Test-Path "web\dist\index.html")) {
+  Write-Host "Building frontend (web/dist missing)..."
+  Push-Location web
+  npm ci
+  npm run build
+  Pop-Location
+}
+
+& uv run python -m PyInstaller `
   --noconfirm `
   --clean `
   --name fsatts `
@@ -77,6 +88,7 @@ if ($wantModels) {
   --hidden-import app `
   --hidden-import app.main `
   --hidden-import app.tts_engine `
+  --hidden-import app.models_registry `
   --hidden-import uvicorn.logging `
   --hidden-import uvicorn.loops.auto `
   --hidden-import uvicorn.protocols.http.auto `
@@ -105,11 +117,9 @@ if ($wantModels) {
   }
 }
 
-# Stage release folder name
 $relName = "fsatts-windows-x64"
 $rel = Join-Path $Root "dist\$relName"
 if (Test-Path $rel) {
-  # Prior run.bat may lock DLLs under the release folder
   Get-Process -Name fsatts -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
   Start-Sleep -Milliseconds 500
   try {
@@ -122,8 +132,7 @@ if (Test-Path $rel) {
 Copy-Item $dist $rel -Recurse
 $zip = Join-Path $Root "dist\$relName.zip"
 if (Test-Path $zip) { Remove-Item $zip -Force }
-# Use Python zipfile (Compress-Archive can fail on nested base_library.zip locks)
-& $venvPy -c @"
+& uv run python -c @"
 import zipfile, pathlib
 rel = pathlib.Path(r'$rel')
 zip_path = pathlib.Path(r'$zip')
@@ -137,7 +146,7 @@ print('zip', zip_path, 'bytes', zip_path.stat().st_size)
 Write-Host "OK: $rel"
 Write-Host "OK: $zip"
 if ($wantModels) {
-  Write-Host "Models bundled under models/. Unzip and run.bat (port 19658). Override with TTS_MODELS_ROOT if needed."
+  Write-Host "Models bundled under models/. Unzip and run.bat (port 19658)."
 } else {
   Write-Host "Next: copy models into $rel\models then run.bat  (port 19658)"
 }

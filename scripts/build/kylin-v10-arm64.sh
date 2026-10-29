@@ -1,22 +1,24 @@
 #!/usr/bin/env bash
 # Kylin V10 arm64 — MUST run on aarch64 (do not fake success on x86_64).
+# Requires: uv (https://docs.astral.sh/uv/)
 #
 # Models: by default, copy usable dirs from repo models/ into the package.
 #   INCLUDE_MODELS=0 ./scripts/build/kylin-v10-arm64.sh   # skip
-#   INCLUDE_MODELS=1 ./scripts/build/kylin-v10-arm64.sh   # include when present
+#   INCLUDE_HUGE_MODELS=1 ...  # also pack theresa/eula/fanchen
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT"
 ARCH="$(uname -m)"
 if [[ "$ARCH" != "aarch64" && "$ARCH" != "arm64" ]]; then
   echo "ERROR: need aarch64 host for Kylin V10 arm64 build. Current: $ARCH" >&2
-  echo "Copy the repo to a Kylin V10 arm64 machine, create .venv, install" >&2
-  echo "sherpa-onnx aarch64 wheel (or build from source), then re-run this script." >&2
+  echo "Copy the repo to a Kylin V10 arm64 machine, install uv, then re-run." >&2
   exit 2
 fi
-PY="${ROOT}/.venv/bin/python"
-[[ -x "$PY" ]] || { echo "Missing .venv" >&2; exit 1; }
-"$PY" -c "import sherpa_onnx" || { echo "sherpa_onnx not importable for aarch64" >&2; exit 1; }
+
+command -v uv >/dev/null || { echo "Install uv: https://docs.astral.sh/uv/" >&2; exit 1; }
+echo "uv sync --extra dev ..."
+uv sync --extra dev
+uv run python -c "import sherpa_onnx" || { echo "sherpa_onnx not importable for aarch64" >&2; exit 1; }
 
 INCLUDE_MODELS="${INCLUDE_MODELS:-1}"
 want_models=1
@@ -24,15 +26,27 @@ case "$INCLUDE_MODELS" in
   0|false|False|no|NO) want_models=0 ;;
 esac
 
+HUGE_MODELS="vits-zh-hf-theresa vits-zh-hf-eula vits-zh-hf-fanchen-C"
+include_huge=0
+case "${INCLUDE_HUGE_MODELS:-0}" in
+  1|true|True|yes|YES) include_huge=1 ;;
+esac
+
 list_model_dirs() {
   local root="$1"
   [[ -d "$root" ]] || return 0
-  local d
+  local d name onnx
   for d in "$root"/*/; do
     [[ -d "$d" ]] || continue
-    if { [[ -f "${d}model.onnx" ]] || [[ -f "${d}model.int8.onnx" ]]; } \
-       && [[ -f "${d}lexicon.txt" ]] && [[ -f "${d}tokens.txt" ]]; then
-      printf '%s\n' "$(basename "$d")"
+    name="$(basename "$d")"
+    if (( ! include_huge )); then
+      case " $HUGE_MODELS " in
+        *" $name "*) continue ;;
+      esac
+    fi
+    onnx="$(find "$d" -maxdepth 1 -type f -name '*.onnx' ! -name '*rule*' -size +1000c | head -n1 || true)"
+    if [[ -n "$onnx" ]] && [[ -f "${d}lexicon.txt" ]] && [[ -f "${d}tokens.txt" ]]; then
+      printf '%s\n' "$name"
     fi
   done
 }
@@ -49,10 +63,15 @@ else
   echo "Models SKIPPED (INCLUDE_MODELS=0)."
 fi
 
-"$PY" -m pip install -q "pyinstaller>=6.0"
-"$PY" -m PyInstaller --noconfirm --clean --name fsatts --onedir --console \
-  --add-data "static:static" --collect-all sherpa_onnx \
+if [[ ! -f web/dist/index.html ]]; then
+  echo "Building frontend (web/dist missing)..."
+  (cd web && npm ci && npm run build)
+fi
+
+uv run python -m PyInstaller --noconfirm --clean --name fsatts --onedir --console \
+  --add-data "static:static" --add-data "web/dist:web/dist" --collect-all sherpa_onnx \
   --hidden-import app --hidden-import app.main --hidden-import app.tts_engine \
+  --hidden-import app.models_registry \
   --hidden-import uvicorn.logging --hidden-import uvicorn.loops.auto \
   --hidden-import uvicorn.protocols.http.auto \
   --hidden-import uvicorn.protocols.websockets.auto \

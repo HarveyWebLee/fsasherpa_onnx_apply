@@ -15,8 +15,8 @@ if [[ "$ARCH" != "aarch64" && "$ARCH" != "arm64" ]]; then
 fi
 
 command -v uv >/dev/null || { echo "Install uv: https://docs.astral.sh/uv/" >&2; exit 1; }
-echo "uv sync --extra dev ..."
-uv sync --extra dev
+echo "uv sync --group dev ..."
+uv sync --group dev
 uv run python -c "import sherpa_onnx" || { echo "sherpa_onnx not importable for aarch64" >&2; exit 1; }
 
 INCLUDE_MODELS="${INCLUDE_MODELS:-1}"
@@ -38,7 +38,17 @@ list_model_dirs() {
       esac
     fi
     onnx="$(find "$d" -maxdepth 1 -type f -name '*.onnx' ! -name '*rule*' -size +1000c | head -n1 || true)"
-    if [[ -n "$onnx" ]] && [[ -f "${d}lexicon.txt" ]] && [[ -f "${d}tokens.txt" ]]; then
+    has_vits_lex=0
+    [[ -f "${d}lexicon.txt" ]] && has_vits_lex=1
+    has_kokoro_lex=0
+    if [[ -f "${d}lexicon-zh.txt" ]] && { [[ -f "${d}lexicon-us-en.txt" ]] || [[ -f "${d}lexicon-gb-en.txt" ]]; }; then
+      has_kokoro_lex=1
+    fi
+    has_voices=1
+    if [[ "$has_kokoro_lex" -eq 1 && "$has_vits_lex" -eq 0 ]]; then
+      [[ -f "${d}voices.bin" ]] || has_voices=0
+    fi
+    if [[ -n "$onnx" ]] && [[ -f "${d}tokens.txt" ]] && { [[ "$has_vits_lex" -eq 1 ]] || [[ "$has_kokoro_lex" -eq 1 ]]; } && [[ "$has_voices" -eq 1 ]]; then
       printf '%s\n' "$name"
     fi
   done

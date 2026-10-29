@@ -15,8 +15,9 @@ Set-Location $Root
 if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
   throw "uv not found. Install: https://docs.astral.sh/uv/"
 }
-Write-Host "uv sync --extra dev ..."
-& uv sync --extra dev
+Write-Host "uv sync --group dev ..."
+& uv sync --group dev
+if ($LASTEXITCODE -ne 0) { throw "uv sync --group dev failed (exit $LASTEXITCODE)" }
 
 # Default: bundle models when repo models/ has content.
 # -SkipModels or INCLUDE_MODELS=0 => empty models/ only
@@ -34,15 +35,25 @@ $assets = Join-Path $Root "scripts\build\package_assets"
 $srcModels = Join-Path $Root "models"
 
 function Get-ModelDirs([string]$ModelsRoot) {
+  # Usable: ONNX + tokens.txt + (VITS lexicon.txt OR Kokoro lexicon-zh + en lexicon [+ voices.bin])
   if (-not (Test-Path $ModelsRoot)) { return @() }
   Get-ChildItem -Path $ModelsRoot -Directory -ErrorAction SilentlyContinue |
     Where-Object {
-      $onnx = Get-ChildItem $_.FullName -Filter '*.onnx' -File -ErrorAction SilentlyContinue |
+      $dir = $_.FullName
+      $onnx = Get-ChildItem $dir -Filter '*.onnx' -File -ErrorAction SilentlyContinue |
         Where-Object { $_.Name -notmatch 'rule' -and $_.Length -gt 1000 } |
         Select-Object -First 1
-      $hasLex = Test-Path (Join-Path $_.FullName 'lexicon.txt')
-      $hasTok = Test-Path (Join-Path $_.FullName 'tokens.txt')
-      $null -ne $onnx -and $hasLex -and $hasTok
+      if ($null -eq $onnx) { return $false }
+      if (-not (Test-Path (Join-Path $dir 'tokens.txt'))) { return $false }
+      $hasVitsLex = Test-Path (Join-Path $dir 'lexicon.txt')
+      $hasKokoroZh = Test-Path (Join-Path $dir 'lexicon-zh.txt')
+      $hasKokoroEn = (Test-Path (Join-Path $dir 'lexicon-us-en.txt')) -or (Test-Path (Join-Path $dir 'lexicon-gb-en.txt'))
+      $hasKokoroLex = $hasKokoroZh -and $hasKokoroEn
+      if (-not ($hasVitsLex -or $hasKokoroLex)) { return $false }
+      if ($hasKokoroLex -and -not $hasVitsLex) {
+        if (-not (Test-Path (Join-Path $dir 'voices.bin'))) { return $false }
+      }
+      return $true
     }
 }
 

@@ -10,7 +10,6 @@ import threading
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Optional
 
 import numpy as np
 import soundfile as sf
@@ -55,7 +54,7 @@ OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 DEFAULT_HOST = os.environ.get("TTS_HOST", "0.0.0.0")
 DEFAULT_PORT = int(os.environ.get("TTS_PORT", "19658"))
 CORS_ORIGINS_RAW = os.environ.get("TTS_CORS_ORIGINS", "*").strip()
-PRELOAD = (os.environ.get("TTS_PRELOAD", "1").strip().lower() not in {"0", "false", "no"})
+PRELOAD = os.environ.get("TTS_PRELOAD", "1").strip().lower() not in {"0", "false", "no"}
 
 
 @asynccontextmanager
@@ -91,7 +90,7 @@ _cors_origins = [o.strip() for o in CORS_ORIGINS_RAW.split(",") if o.strip()] or
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
-    allow_credentials=False if _cors_origins == ["*"] else True,
+    allow_credentials=_cors_origins != ["*"],
     allow_methods=["*"],
     allow_headers=["*"],
     expose_headers=[
@@ -122,8 +121,8 @@ class SynthRequest(BaseModel):
     text: str = Field(..., min_length=1, max_length=2000)
     speed: float = Field(1.0, ge=0.5, le=2.0)
     sid: int = Field(0, ge=0)
-    provider: Optional[str] = None
-    model_id: Optional[str] = None
+    provider: str | None = None
+    model_id: str | None = None
 
 
 class ProviderRequest(BaseModel):
@@ -183,11 +182,11 @@ def health():
     return payload
 
 
-
 @app.get("/health")
 def health_alias():
     """Compat alias for older clients / probes."""
     return health()
+
 
 @app.get("/api/status")
 def status():
@@ -244,7 +243,7 @@ def set_model(req: ModelRequest):
 
 
 @app.get("/api/speakers")
-def speakers(model_id: Optional[str] = Query(default=None)):
+def speakers(model_id: str | None = Query(default=None)):
     mid = model_id or engine.model_id
     if mid not in MODEL_REGISTRY:
         raise HTTPException(status_code=400, detail=f"未知 model_id: {mid}")
@@ -328,7 +327,9 @@ def synthesize_http_stream(req: SynthRequest):
                 req.text, sid=req.sid, speed=req.speed, model_id=mid, provider=req.provider
             ):
                 if kind == "meta":
-                    yield (json.dumps({"type": "meta", **payload}, ensure_ascii=False) + "\n").encode("utf-8")
+                    yield (
+                        json.dumps({"type": "meta", **payload}, ensure_ascii=False) + "\n"
+                    ).encode("utf-8")
                 elif kind == "chunk":
                     yield np.asarray(payload, dtype=np.float32).tobytes(order="C")
                 elif kind == "end":
@@ -375,7 +376,9 @@ async def ws_tts(websocket: WebSocket):
             try:
                 await asyncio.to_thread(lambda: engine.set_provider(str(provider), warmup=False))
             except Exception as exc:  # noqa: BLE001
-                await websocket.send_json({"type": "error", "message": f"切换 provider 失败: {exc}"})
+                await websocket.send_json(
+                    {"type": "error", "message": f"切换 provider 失败: {exc}"}
+                )
                 await websocket.close()
                 return
 

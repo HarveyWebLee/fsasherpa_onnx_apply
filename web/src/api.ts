@@ -65,7 +65,7 @@ export function fetchStatus() {
 
 export function fetchSpeakers(modelId: string) {
   return j<{ speakers: Speaker[]; num_speakers: number; ready: boolean }>(
-    `/api/speakers?model_id=${encodeURIComponent(modelId)}`
+    `/api/speakers?model_id=${encodeURIComponent(modelId)}`,
   );
 }
 
@@ -124,4 +124,3 @@ export async function synthesizeWav(params: SynthParams): Promise<{
   });
   return { blob: await res.blob(), headers };
 }
-

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Download sherpa-onnx TTS models (GitHub release + mirrors + HF, resumable)."""
+
 from __future__ import annotations
 
 import argparse
@@ -66,14 +67,25 @@ def _archive_ok(path: Path, expect_mb: float | None = None) -> bool:
 def _curl_one(url: str, dest: Path, *, retries: int = 2, max_time: int = 3600) -> int:
     dest.parent.mkdir(parents=True, exist_ok=True)
     cmd = [
-        "curl", "-L", "-C", "-",
-        "--connect-timeout", "20", "--max-time", str(max_time),
-        "--retry", str(retries), "--retry-delay", "2",
-        "-o", str(dest), url,
+        "curl",
+        "-L",
+        "-C",
+        "-",
+        "--connect-timeout",
+        "20",
+        "--max-time",
+        str(max_time),
+        "--retry",
+        str(retries),
+        "--retry-delay",
+        "2",
+        "-o",
+        str(dest),
+        url,
     ]
     print("GET", url, flush=True)
     if dest.is_file() and dest.stat().st_size > 0:
-        print(f"  resume from {dest.stat().st_size/1e6:.1f} MB", flush=True)
+        print(f"  resume from {dest.stat().st_size / 1e6:.1f} MB", flush=True)
     return subprocess.run(cmd).returncode
 
 
@@ -88,7 +100,17 @@ def _hf_tree_download(model_id: str, dest_dir: Path) -> bool:
     names = []
     if spec.onnx_name:
         names.append(spec.onnx_name)
-    names.extend(["model.onnx", "model.int8.onnx", "lexicon.txt", "tokens.txt", "date.fst", "number.fst", "phone.fst"])
+    names.extend(
+        [
+            "model.onnx",
+            "model.int8.onnx",
+            "lexicon.txt",
+            "tokens.txt",
+            "date.fst",
+            "number.fst",
+            "phone.fst",
+        ]
+    )
     # unique preserve order
     seen: set[str] = set()
     uniq = []
@@ -116,7 +138,7 @@ def _hf_tree_download(model_id: str, dest_dir: Path) -> bool:
                     dest.unlink(missing_ok=True)
                     print(f"  HTML error for {name}, next mirror", flush=True)
                     break
-                print(f"  got {name} ({dest.stat().st_size/1e6:.2f} MB) rc={rc}", flush=True)
+                print(f"  got {name} ({dest.stat().st_size / 1e6:.2f} MB) rc={rc}", flush=True)
                 ok_files += 1
                 got_any = True
             else:
@@ -156,7 +178,7 @@ def download_one(model_id: str, force: bool = False) -> bool:
         archive.unlink()
 
     if not force and _archive_ok(archive, expect_mb=spec.archive_mb):
-        print(f"  using existing archive {archive} ({archive.stat().st_size/1e6:.1f} MB)")
+        print(f"  using existing archive {archive} ({archive.stat().st_size / 1e6:.1f} MB)")
         ok = True
     else:
         if archive.is_file() and not _is_bzip2(archive):
@@ -168,18 +190,20 @@ def download_one(model_id: str, force: bool = False) -> bool:
             url = f"{base}/{spec.archive}"
             rc = _curl_one(url, archive, retries=1)
             if _archive_ok(archive, expect_mb=spec.archive_mb):
-                print(f"  archive OK ({archive.stat().st_size/1e6:.1f} MB) curl_rc={rc}", flush=True)
+                print(
+                    f"  archive OK ({archive.stat().st_size / 1e6:.1f} MB) curl_rc={rc}", flush=True
+                )
                 ok = True
                 break
             if archive.is_file() and not _is_bzip2(archive):
                 print("  non-bz2 response; clearing before next mirror")
                 archive.unlink(missing_ok=True)
             elif archive.is_file() and not _archive_ok(archive, expect_mb=spec.archive_mb):
-                print(f"  partial/incomplete ({archive.stat().st_size/1e6:.1f} MB); next mirror")
+                print(f"  partial/incomplete ({archive.stat().st_size / 1e6:.1f} MB); next mirror")
                 archive.unlink(missing_ok=True)
 
     if ok:
-        print(f"EXTRACT {archive} ({archive.stat().st_size/1e6:.1f} MB)")
+        print(f"EXTRACT {archive} ({archive.stat().st_size / 1e6:.1f} MB)")
         with tarfile.open(archive, "r:bz2") as tf:
             tf.extractall(models_root())
         archive.unlink(missing_ok=True)

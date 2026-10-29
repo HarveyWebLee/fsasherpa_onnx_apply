@@ -8,14 +8,18 @@
   --accent: #1677ff;
 }
 
-* { box-sizing: border-box; }
+* {
+  box-sizing: border-box;
+}
 
-html, body, #root {
+html,
+body,
+#root {
   margin: 0;
   min-height: 100%;
-  background: radial-gradient(1200px 600px at 10% -10%, #dbeafe 0%, transparent 55%),
-              radial-gradient(900px 500px at 100% 0%, #e0e7ff 0%, transparent 50%),
-              var(--bg);
+  background:
+    radial-gradient(1200px 600px at 10% -10%, #dbeafe 0%, transparent 55%),
+    radial-gradient(900px 500px at 100% 0%, #e0e7ff 0%, transparent 50%), var(--bg);
   color: var(--ink);
 }
 
@@ -46,7 +50,6 @@ html, body, #root {
   font-size: 0.92rem;
   margin-top: 4px;
 }
-
 
 .panel {
   background: var(--card);

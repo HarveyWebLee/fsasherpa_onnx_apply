@@ -80,6 +80,35 @@ uv run python -m uvicorn app.main:app --host 127.0.0.1 --port 19658
 cd web; npm run dev
 ```
 
+
+## 代码检查与格式化
+
+### 前端（`web/`，Prettier + ESLint + TypeScript）
+
+```powershell
+cd web
+npm install
+npm run format        # Prettier 写回
+npm run lint          # ESLint
+npm run lint:fix     # ESLint 自动修复
+npm run typecheck     # tsc --noEmit
+npm run check         # typecheck + lint + format:check
+npm run build         # 先 typecheck 再 vite build
+```
+
+配置：`web/.prettierrc.json`、`web/eslint.config.js`（flat，React 19 + TS + Vite）。
+
+### 后端（Python / FastAPI，Ruff via uv）
+
+```powershell
+uv sync               # 含 dev 组：ruff、pyinstaller
+uv run ruff format app scripts
+uv run ruff check app scripts
+uv run ruff check --fix app scripts
+```
+
+配置见根目录 `pyproject.toml` 的 `[tool.ruff]`（line-length=100，E/W/F/I/B/UP/SIM）。
+
 ## 目录
 
 ```

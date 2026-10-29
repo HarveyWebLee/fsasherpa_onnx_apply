@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """Benchmark OfflineTts RTF across thread counts."""
+
 from __future__ import annotations
 
 import time

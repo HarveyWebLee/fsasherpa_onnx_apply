@@ -39,7 +39,7 @@ async def main() -> int:
             if isinstance(msg, bytes):
                 chunks += 1
                 samples += len(msg) // 4
-                print(f"chunk#{chunks}: {len(msg)} bytes ({len(msg)//4} samples)")
+                print(f"chunk#{chunks}: {len(msg)} bytes ({len(msg) // 4} samples)")
                 continue
             data = json.loads(msg)
             typ = data.get("type")

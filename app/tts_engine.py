@@ -7,11 +7,11 @@ import queue
 import sys
 import threading
 import time
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator, Optional
 
 import numpy as np
 import sherpa_onnx
@@ -20,7 +20,6 @@ from .models_registry import (
     DEFAULT_MODEL_ID,
     MODEL_REGISTRY,
     VOICE_ROLE_PRESETS,
-    ModelSpec,
     get_spec,
     model_files_ready,
     model_missing_files,
@@ -128,7 +127,7 @@ class _ModelPool:
         self.slots: list[_EngineSlot] = []
         self._free: queue.Queue = queue.Queue()
         self._lock = threading.Lock()
-        self._load_elapsed: Optional[float] = None
+        self._load_elapsed: float | None = None
         self._built = False
 
     def _build_one(self) -> _EngineSlot:
@@ -188,7 +187,7 @@ class _ModelPool:
                     self._free.get_nowait()
                 except queue.Empty:
                     break
-            for i in range(self.size):
+            for _i in range(self.size):
                 slot = self._build_one()
                 self.slots.append(slot)
                 self._free.put(slot)
@@ -224,9 +223,9 @@ class TtsEngine:
 
     def __init__(
         self,
-        model_id: Optional[str] = None,
-        num_threads: Optional[int] = None,
-        provider: Optional[str] = None,
+        model_id: str | None = None,
+        num_threads: int | None = None,
+        provider: str | None = None,
     ) -> None:
         mid = (model_id or os.environ.get("TTS_MODEL_ID") or DEFAULT_MODEL_ID).strip()
         if mid not in MODEL_REGISTRY:
@@ -258,14 +257,14 @@ class TtsEngine:
         spec = get_spec(self.model_id)
         return spec.path if spec else MODELS_ROOT / self.model_id
 
-    def model_ready(self, model_id: Optional[str] = None) -> bool:
+    def model_ready(self, model_id: str | None = None) -> bool:
         mid = model_id or self.model_id
         spec = get_spec(mid)
         if not spec:
             return False
         return model_files_ready(spec.path, spec)
 
-    def missing_files(self, model_id: Optional[str] = None) -> list[str]:
+    def missing_files(self, model_id: str | None = None) -> list[str]:
         mid = model_id or self.model_id
         spec = get_spec(mid)
         if not spec:
@@ -295,7 +294,7 @@ class TtsEngine:
             )
         return items
 
-    def list_speakers(self, model_id: Optional[str] = None) -> list[dict]:
+    def list_speakers(self, model_id: str | None = None) -> list[dict]:
         mid = model_id or self.model_id
         spec = get_spec(mid)
         documented = list(spec.speakers) if spec and spec.speakers else []
@@ -342,9 +341,8 @@ class TtsEngine:
     def cuda_runtime_present() -> bool:
         lib = Path(sys.prefix) / "Lib" / "site-packages" / "sherpa_onnx" / "lib"
         ep = lib / "onnxruntime_providers_cuda.dll"
-        if not ep.is_file():
-            if not (lib / "libonnxruntime_providers_cuda.so").is_file():
-                return False
+        if not ep.is_file() and not (lib / "libonnxruntime_providers_cuda.so").is_file():
+            return False
         nvidia = Path(sys.prefix) / "Lib" / "site-packages" / "nvidia"
         if not nvidia.is_dir():
             nvidia = ROOT / ".venv" / "Lib" / "site-packages" / "nvidia"
@@ -369,9 +367,9 @@ class TtsEngine:
             "model_loaded": bool(pool and pool._built),
             "load_elapsed_seconds": pool._load_elapsed if pool else None,
             "model_dir": str(self.model_dir),
-            "sample_rate": pool.slots[0].sample_rate if pool and pool.slots else (
-                spec.expected_sample_rate if spec else None
-            ),
+            "sample_rate": pool.slots[0].sample_rate
+            if pool and pool.slots
+            else (spec.expected_sample_rate if spec else None),
             "expected_sample_rate": spec.expected_sample_rate if spec else None,
             "switch_count": self._switch_count,
             "busy": inflight > 0,
@@ -394,7 +392,7 @@ class TtsEngine:
             },
         }
 
-    def _get_pool(self, model_id: str, provider: Optional[str] = None) -> _ModelPool:
+    def _get_pool(self, model_id: str, provider: str | None = None) -> _ModelPool:
         prov = (provider or self.provider).lower()
         key = (model_id, prov)
         with self._pools_lock:
@@ -404,7 +402,7 @@ class TtsEngine:
                 self._pools[key] = pool
             return pool
 
-    def preload(self, model_id: Optional[str] = None) -> dict:
+    def preload(self, model_id: str | None = None) -> dict:
         mid = model_id or self.model_id
         pool = self._get_pool(mid)
         pool.ensure()
@@ -419,7 +417,9 @@ class TtsEngine:
             "switch_count": self._switch_count,
         }
 
-    def set_provider(self, provider: str, *, warmup: bool = True, wait_busy_timeout: float = 120.0) -> dict:
+    def set_provider(
+        self, provider: str, *, warmup: bool = True, wait_busy_timeout: float = 120.0
+    ) -> dict:
         p = provider.strip().lower()
         if p not in {"cpu", "cuda", "coreml"}:
             raise ValueError("provider 必须是 cpu / cuda / coreml")
@@ -435,7 +435,9 @@ class TtsEngine:
         info.update({"ok": True, "changed": True, "previous_provider": prev, "provider": p})
         return info
 
-    def set_model(self, model_id: str, *, warmup: bool = True, wait_busy_timeout: float = 120.0) -> dict:
+    def set_model(
+        self, model_id: str, *, warmup: bool = True, wait_busy_timeout: float = 120.0
+    ) -> dict:
         mid = model_id.strip()
         if mid not in MODEL_REGISTRY:
             raise ValueError(f"未知 model_id: {mid}。可选: {', '.join(MODEL_REGISTRY)}")
@@ -488,9 +490,7 @@ class TtsEngine:
                 )
             if self._queued >= self.max_queue and self._inflight >= self.pool_size:
                 self._stats_reject += 1
-                raise OverflowError(
-                    f"排队已满：queued={self._queued}/{self.max_queue}"
-                )
+                raise OverflowError(f"排队已满：queued={self._queued}/{self.max_queue}")
             self._inflight += 1
             self._queued += 1
 
@@ -509,8 +509,8 @@ class TtsEngine:
         sid: int = 0,
         speed: float = 1.0,
         *,
-        model_id: Optional[str] = None,
-        provider: Optional[str] = None,
+        model_id: str | None = None,
+        provider: str | None = None,
     ) -> SynthResult:
         text = (text or "").strip()
         if not text:
@@ -566,10 +566,10 @@ class TtsEngine:
         text: str,
         sid: int = 0,
         speed: float = 1.0,
-        cancel_event: Optional[threading.Event] = None,
+        cancel_event: threading.Event | None = None,
         *,
-        model_id: Optional[str] = None,
-        provider: Optional[str] = None,
+        model_id: str | None = None,
+        provider: str | None = None,
     ) -> Iterator[tuple[str, object]]:
         text = (text or "").strip()
         if not text:

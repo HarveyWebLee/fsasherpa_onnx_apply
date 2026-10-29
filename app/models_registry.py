@@ -1,11 +1,10 @@
-﻿"""Model registry for multi-speaker sherpa-onnx TTS models."""
+"""Model registry for multi-speaker sherpa-onnx TTS models."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Optional
 import os
+from dataclasses import dataclass
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -24,15 +23,15 @@ class ModelSpec:
     dir_name: str
     description: str
     num_speakers: int = 1
-    expected_sample_rate: Optional[int] = None
+    expected_sample_rate: int | None = None
     tags: tuple[str, ...] = ()
     speakers: tuple[dict, ...] = ()
     # Explicit ONNX filename inside model dir (None = auto-detect)
-    onnx_name: Optional[str] = None
+    onnx_name: str | None = None
     # Whether default packaging should include this model
     bundle_default: bool = False
     # Download archive name on GitHub tts-models release
-    archive: Optional[str] = None
+    archive: str | None = None
     # Approximate download size (MB, compressed)
     archive_mb: float = 0.0
     lang: str = "zh"
@@ -42,7 +41,7 @@ class ModelSpec:
         return models_root() / self.dir_name
 
 
-def _spk(n: int, name: Optional[str] = None, note: str = "") -> dict:
+def _spk(n: int, name: str | None = None, note: str = "") -> dict:
     return {
         "sid": n,
         "name": name or f"说话人 {n}",
@@ -221,7 +220,7 @@ VOICE_ROLE_PRESETS: list[dict] = [
 ]
 
 
-def resolve_onnx_path(model_dir: Path, spec: Optional[ModelSpec] = None) -> Optional[Path]:
+def resolve_onnx_path(model_dir: Path, spec: ModelSpec | None = None) -> Path | None:
     """Find the ONNX weights file for a model directory."""
     candidates: list[Path] = []
     if spec and spec.onnx_name:
@@ -247,17 +246,19 @@ def resolve_onnx_path(model_dir: Path, spec: Optional[ModelSpec] = None) -> Opti
     return None
 
 
-def model_files_ready(model_dir: Path, spec: Optional[ModelSpec] = None) -> bool:
+def model_files_ready(model_dir: Path, spec: ModelSpec | None = None) -> bool:
     onnx = resolve_onnx_path(model_dir, spec)
     tokens = model_dir / "tokens.txt"
     lexicon = model_dir / "lexicon.txt"
     return bool(onnx) and tokens.is_file() and lexicon.is_file()
 
 
-def model_missing_files(model_dir: Path, spec: Optional[ModelSpec] = None) -> list[str]:
+def model_missing_files(model_dir: Path, spec: ModelSpec | None = None) -> list[str]:
     missing: list[str] = []
     if resolve_onnx_path(model_dir, spec) is None:
-        missing.append(str(model_dir / (spec.onnx_name if spec and spec.onnx_name else "model.onnx")))
+        missing.append(
+            str(model_dir / (spec.onnx_name if spec and spec.onnx_name else "model.onnx"))
+        )
     for name in ("lexicon.txt", "tokens.txt"):
         p = model_dir / name
         if not p.is_file():
@@ -265,7 +266,7 @@ def model_missing_files(model_dir: Path, spec: Optional[ModelSpec] = None) -> li
     return missing
 
 
-def get_spec(model_id: str) -> Optional[ModelSpec]:
+def get_spec(model_id: str) -> ModelSpec | None:
     return MODEL_REGISTRY.get(model_id)
 
 

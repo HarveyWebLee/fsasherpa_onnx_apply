@@ -27,9 +27,6 @@ cuda = [
   "nvidia-cusparse-cu12",
   "nvidia-nvjitlink-cu12",
 ]
-dev = [
-  "pyinstaller>=6.0",
-]
 
 [project.scripts]
 fsatts = "app.main:main"
@@ -43,3 +40,53 @@ packages = ["app"]
 
 [tool.uv]
 package = true
+
+[dependency-groups]
+dev = [
+    "pyinstaller>=6.22.3",
+    "ruff>=0.17.3",
+]
+
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+src = ["app", "scripts"]
+exclude = [
+  ".venv",
+  "build",
+  "dist",
+  "models",
+  "outputs",
+  "web/node_modules",
+  "web/dist",
+]
+
+[tool.ruff.lint]
+select = [
+  "E",    # pycodestyle errors
+  "W",    # pycodestyle warnings
+  "F",    # pyflakes
+  "I",    # isort
+  "B",    # flake8-bugbear
+  "UP",   # pyupgrade
+  "SIM",  # simplify
+]
+ignore = [
+  "E501",  # line length handled by formatter
+  "B008",  # FastAPI Depends() in defaults is intentional
+]
+
+[tool.ruff.lint.per-file-ignores]
+"scripts/**" = ["T201", "E402"]
+"scripts/build/**" = ["E402"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"
+skip-magic-trailing-comma = false
+docstring-code-format = true

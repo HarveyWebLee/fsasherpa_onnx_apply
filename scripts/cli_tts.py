@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """Command-line TTS smoke test."""
 
 from __future__ import annotations
@@ -13,7 +13,6 @@ sys.path.insert(0, str(ROOT))
 import soundfile as sf
 
 from app.tts_engine import engine
-
 
 EXAMPLES = {
     "zh": "你好，欢迎使用本地文本转语音测试。",

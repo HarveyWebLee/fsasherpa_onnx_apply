@@ -13,8 +13,7 @@ createRoot(document.getElementById("root")!).render(
         token: {
           colorPrimary: "#1677ff",
           borderRadius: 10,
-          fontFamily:
-            '"Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif',
+          fontFamily: '"Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif',
         },
       }}
     >
@@ -22,5 +21,5 @@ createRoot(document.getElementById("root")!).render(
         <App />
       </AntApp>
     </ConfigProvider>
-  </React.StrictMode>
+  </React.StrictMode>,
 );

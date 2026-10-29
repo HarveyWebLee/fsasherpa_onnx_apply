@@ -37,8 +37,7 @@ import {
 const { TextArea } = Input;
 const { Title, Text, Paragraph } = Typography;
 
-const SAMPLE =
-  "欢迎使用本地多模型语音合成。Hello from fsatts — Chinese and English mixed TTS.";
+const SAMPLE = "欢迎使用本地多模型语音合成。Hello from fsatts — Chinese and English mixed TTS.";
 
 export default function App() {
   const { message } = AntApp.useApp();
@@ -85,10 +84,7 @@ export default function App() {
     };
   }, [audioUrl]);
 
-  const readyModels = useMemo(
-    () => models.filter((m) => m.ready),
-    [models]
-  );
+  const readyModels = useMemo(() => models.filter((m) => m.ready), [models]);
   const currentModel = models.find((m) => m.id === modelId);
 
   const onModelChange = async (next: string) => {
@@ -157,9 +153,7 @@ export default function App() {
       setAudioUrl(url);
       setMetrics({
         耗时: headers["X-Elapsed-Ms"] ? `${headers["X-Elapsed-Ms"]} ms` : "-",
-        音频: headers["X-Audio-Duration"]
-          ? `${headers["X-Audio-Duration"]} s`
-          : "-",
+        音频: headers["X-Audio-Duration"] ? `${headers["X-Audio-Duration"]} s` : "-",
         RTF: headers["X-RTF"] || "-",
         采样率: headers["X-Sample-Rate"] || "-",
         模型: headers["X-Model-Id"] || modelId,
@@ -187,9 +181,7 @@ export default function App() {
             <SoundOutlined style={{ color: token.colorPrimary, marginRight: 8 }} />
             fsatts 本地 TTS
           </Title>
-          <div className="sub">
-            多模型 · 说话人切换 · 高并发插件服务（端口 19658）
-          </div>
+          <div className="sub">多模型 · 说话人切换 · 高并发插件服务（端口 19658）</div>
         </div>
         <Space wrap>
           <Tag icon={<CloudServerOutlined />} color={status?.model_ready ? "success" : "warning"}>
@@ -234,9 +226,7 @@ export default function App() {
                       ? ` · ${currentModel.expected_sample_rate} Hz`
                       : ""}
                     {` · ${currentModel.num_speakers} 说话人`}
-                    {!currentModel.ready && currentModel.missing?.length
-                      ? ` · 缺失文件请下载`
-                      : ""}
+                    {!currentModel.ready && currentModel.missing?.length ? ` · 缺失文件请下载` : ""}
                   </div>
                 )}
               </div>
@@ -356,9 +346,8 @@ export default function App() {
               <div>
                 <Text type="secondary">并发</Text>
                 <Paragraph className="hint" style={{ marginBottom: 0 }}>
-                  引擎池大小 <b>{conc?.pool_size}</b>，最大在途请求{" "}
-                  <b>{conc?.max_inflight}</b>。环境变量{" "}
-                  <code>TTS_ENGINE_POOL_SIZE</code> / <code>TTS_MAX_INFLIGHT</code>{" "}
+                  引擎池大小 <b>{conc?.pool_size}</b>，最大在途请求 <b>{conc?.max_inflight}</b>
+                  。环境变量 <code>TTS_ENGINE_POOL_SIZE</code> / <code>TTS_MAX_INFLIGHT</code>{" "}
                   可调。队列满时返回 503。
                 </Paragraph>
               </div>

@@ -1,1 +1,1 @@
-﻿"""Sherpa-ONNX TTS web demo package."""
+"""Sherpa-ONNX TTS web demo package."""

@@ -1,6 +1,5 @@
-# Optional CUDA stack for Windows + sherpa-onnx==2.0.1+cuda12.cudnn9
-# Install sherpa CUDA wheel first (see README), then:
-#   pip install -r requirements-cuda.txt
+# Prefer: uv sync --extra cuda
+# Then install the matching sherpa-onnx CUDA wheel if needed (see README).
 nvidia-cuda-runtime-cu12
 nvidia-cublas-cu12
 nvidia-cudnn-cu12

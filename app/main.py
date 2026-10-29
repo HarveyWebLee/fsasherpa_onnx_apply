@@ -1,29 +1,30 @@
-"""FastAPI web UI for sherpa-onnx Chinese/English TTS (full + streaming)."""
+"""FastAPI TTS plugin — multi-model, concurrent, React UI."""
 
 from __future__ import annotations
 
 import asyncio
 import io
 import json
+import os
 import threading
 import uuid
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
 
 import numpy as np
 import soundfile as sf
-from contextlib import asynccontextmanager
-
-import os
-
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.websockets import WebSocketState
 
+from .models_registry import MODEL_REGISTRY, list_downloadable
 from .tts_engine import ROOT, engine
+
+APP_VERSION = "2.0.0"
 
 
 def _resolve_static_dir() -> Path:
@@ -32,19 +33,24 @@ def _resolve_static_dir() -> Path:
         p = Path(env)
         if p.is_dir():
             return p
+    # Prefer React production build
+    web_dist = ROOT / "web" / "dist"
+    if (web_dist / "index.html").is_file():
+        return web_dist
     cand = ROOT / "static"
     if cand.is_dir():
         return cand
-    # frozen: next to exe
     import sys
 
     if getattr(sys, "frozen", False):
         meipass = Path(getattr(sys, "_MEIPASS", Path(sys.executable).resolve().parent))
-        if (meipass / "static").is_dir():
-            return meipass / "static"
-        beside = Path(sys.executable).resolve().parent / "static"
-        if beside.is_dir():
-            return beside
+        for rel in ("web/dist", "static"):
+            if (meipass / rel).is_dir():
+                return meipass / rel
+        beside = Path(sys.executable).resolve().parent
+        for rel in ("web/dist", "static"):
+            if (beside / rel).is_dir():
+                return beside / rel
     return cand
 
 
@@ -52,20 +58,20 @@ STATIC_DIR = _resolve_static_dir()
 OUTPUT_DIR = Path(os.environ.get("TTS_OUTPUT_DIR") or (ROOT / "outputs"))
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-# Plugin listen defaults (override with TTS_HOST / TTS_PORT)
 DEFAULT_HOST = os.environ.get("TTS_HOST", "0.0.0.0")
 DEFAULT_PORT = int(os.environ.get("TTS_PORT", "19658"))
 CORS_ORIGINS_RAW = os.environ.get("TTS_CORS_ORIGINS", "*").strip()
+PRELOAD = (os.environ.get("TTS_PRELOAD", "1").strip().lower() not in {"0", "false", "no"})
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    if engine.model_ready():
+    if PRELOAD and engine.model_ready():
         try:
             info = engine.preload()
             print(
                 f"[tts] preloaded model={info.get('model_id')} "
-                f"threads={info.get('num_threads')} "
+                f"pool={info.get('pool_size')} "
                 f"provider={info.get('provider')} "
                 f"sr={info.get('sample_rate')} "
                 f"load={info.get('load_elapsed_seconds'):.2f}s"
@@ -73,20 +79,21 @@ async def lifespan(_app: FastAPI):
         except Exception as exc:  # noqa: BLE001
             print(f"[tts] preload failed: {exc}")
     else:
-        print(f"[tts] model not ready: {engine.model_id} missing={engine.missing_files()}")
+        print(
+            f"[tts] ready={engine.model_ready()} model={engine.model_id} "
+            f"preload={PRELOAD} missing={engine.missing_files() if not engine.model_ready() else []}"
+        )
     yield
 
 
 app = FastAPI(
-    title="sherpa-onnx TTS Plugin",
-    description="本地 TTS 插件服务（CORS + 多模型 + 流式）；供本机网页及其他浏览器通过 HTTP/WS 调用",
-    version="1.6.0",
+    title="fsatts — sherpa-onnx TTS Plugin",
+    description="本地多模型 TTS 插件（CORS / 流式 / ≥50 并发队列）",
+    version=APP_VERSION,
     lifespan=lifespan,
 )
 
-_cors_origins = [o.strip() for o in CORS_ORIGINS_RAW.split(",") if o.strip()]
-if not _cors_origins:
-    _cors_origins = ["*"]
+_cors_origins = [o.strip() for o in CORS_ORIGINS_RAW.split(",") if o.strip()] or ["*"]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
@@ -106,55 +113,79 @@ app.add_middleware(
         "X-Saved-As",
         "X-Stream-Format",
         "X-Channels",
+        "Retry-After",
     ],
 )
 
+# Assets under /assets for Vite build; /static for legacy
 if STATIC_DIR.is_dir():
-    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+    assets = STATIC_DIR / "assets"
+    if assets.is_dir():
+        app.mount("/assets", StaticFiles(directory=str(assets)), name="assets")
+    legacy = ROOT / "static"
+    if legacy.is_dir() and legacy.resolve() != STATIC_DIR.resolve():
+        app.mount("/static", StaticFiles(directory=str(legacy)), name="static")
+    elif (STATIC_DIR / "static").is_dir():
+        app.mount("/static", StaticFiles(directory=str(STATIC_DIR / "static")), name="static")
+    else:
+        # Vite may put everything in dist; also serve whole dist for favicon etc.
+        pass
 
 
 class SynthRequest(BaseModel):
-    text: str = Field(..., min_length=1, max_length=2000, description="待合成文本")
-    speed: float = Field(1.0, ge=0.5, le=2.0, description="语速，1.0 为正常")
-    sid: int = Field(0, ge=0, description="说话人 ID（本模型仅 1 个说话人）")
-    mode: Optional[str] = Field(
-        default="mixed",
-        description="语言模式说明：zh / en / mixed（同一模型，仅 UI 标记）",
-    )
-    provider: Optional[str] = Field(
-        default=None,
-        description="可选：本次请求前切换到 cpu/cuda",
-    )
-    model_id: Optional[str] = Field(
-        default=None,
-        description="可选：本次请求前切换模型（如 melo-zh-en-44k / melo-zh-en-8k）",
-    )
+    text: str = Field(..., min_length=1, max_length=2000)
+    speed: float = Field(1.0, ge=0.5, le=2.0)
+    sid: int = Field(0, ge=0)
+    mode: Optional[str] = Field(default="mixed")
+    provider: Optional[str] = None
+    model_id: Optional[str] = None
 
 
 class ProviderRequest(BaseModel):
-    provider: str = Field(..., description="cpu 或 cuda")
-    warmup: bool = Field(True, description="切换后是否短句预热")
+    provider: str
+    warmup: bool = True
 
 
 class ModelRequest(BaseModel):
-    model_id: str = Field(..., description="注册表中的模型 id，如 melo-zh-en-8k")
-    warmup: bool = Field(True, description="切换后是否短句预热")
+    model_id: str
+    warmup: bool = True
+
+
+def _http_from_exc(exc: Exception) -> HTTPException:
+    if isinstance(exc, OverflowError):
+        return HTTPException(
+            status_code=503,
+            detail={"message": str(exc), "code": "busy"},
+            headers={"Retry-After": "2"},
+        )
+    if isinstance(exc, TimeoutError):
+        return HTTPException(status_code=409, detail=str(exc))
+    if isinstance(exc, ValueError):
+        return HTTPException(status_code=400, detail=str(exc))
+    if isinstance(exc, (RuntimeError, FileNotFoundError)):
+        return HTTPException(status_code=503, detail=str(exc))
+    return HTTPException(status_code=500, detail=f"{type(exc).__name__}: {exc}")
 
 
 @app.get("/", response_class=HTMLResponse)
 def index() -> FileResponse:
     index_path = STATIC_DIR / "index.html"
     if not index_path.is_file():
-        raise HTTPException(status_code=404, detail="缺少 static/index.html")
+        # fallback legacy
+        legacy = ROOT / "static" / "index.html"
+        if legacy.is_file():
+            return FileResponse(legacy)
+        raise HTTPException(status_code=404, detail="缺少前端 index.html，请先构建 web/")
     return FileResponse(index_path)
 
 
 @app.get("/api/health")
 def health():
+    info = engine.runtime_info()
     payload = {
         "ok": True,
         "service": "fsatts",
-        "version": app.version,
+        "version": APP_VERSION,
         "model_ready": engine.model_ready(),
         "model_dir": str(engine.model_dir),
         "missing": engine.missing_files() if not engine.model_ready() else [],
@@ -163,8 +194,11 @@ def health():
         "listen_port": DEFAULT_PORT,
         "cors_origins": _cors_origins,
         "plugin": True,
+        "queue_depth": info.get("concurrency", {}).get("queued"),
+        "inflight": info.get("concurrency", {}).get("inflight"),
+        "max_inflight": info.get("concurrency", {}).get("max_inflight"),
     }
-    payload.update(engine.runtime_info())
+    payload.update(info)
     return payload
 
 
@@ -175,26 +209,15 @@ def status():
         "model_ready": ready,
         "model_dir": str(engine.model_dir),
         "missing": engine.missing_files() if not ready else [],
-        "num_speakers": None,
-        "sample_rate": None,
-        "lang": None,
         "streaming": True,
         "ws_tts": "/ws/tts",
         "http_stream": "/api/tts/stream",
         "provider_api": "/api/provider",
         "models_api": "/api/models",
         "models": engine.list_models(),
+        "downloadable": list_downloadable(),
     }
     info.update(engine.runtime_info())
-    if ready:
-        try:
-            tts = engine.ensure_loaded()
-            info["num_speakers"] = int(tts.num_speakers)
-            info["sample_rate"] = tts.sample_rate
-            info["lang"] = getattr(tts, "lang", None)
-            info["speakers"] = engine.list_speakers()
-        except Exception as exc:  # noqa: BLE001
-            info["load_error"] = str(exc)
     info["voice_roles"] = engine.list_voice_roles()
     return info
 
@@ -209,16 +232,9 @@ def get_provider():
 @app.post("/api/provider")
 def set_provider(req: ProviderRequest):
     try:
-        result = engine.set_provider(req.provider, warmup=bool(req.warmup))
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except TimeoutError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except (RuntimeError, FileNotFoundError) as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return engine.set_provider(req.provider, warmup=bool(req.warmup))
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=500, detail=f"切换 provider 失败: {exc}") from exc
-    return result
+        raise _http_from_exc(exc) from exc
 
 
 @app.get("/api/models")
@@ -227,77 +243,72 @@ def list_models():
         "ok": True,
         "current": engine.model_id,
         "models": engine.list_models(),
+        "downloadable": list_downloadable(),
         **engine.runtime_info(),
     }
 
 
 @app.post("/api/models")
 def set_model(req: ModelRequest):
-    """Hot-switch TTS model (rebuild OfflineTts + optional warmup)."""
     try:
-        result = engine.set_model(req.model_id, warmup=bool(req.warmup))
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except TimeoutError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return engine.set_model(req.model_id, warmup=bool(req.warmup))
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=500, detail=f"切换模型失败: {exc}") from exc
-    return result
+        raise _http_from_exc(exc) from exc
 
 
-def _maybe_switch(provider: Optional[str], model_id: Optional[str]) -> None:
-    # Apply model first, then provider, so one rebuild each when both change
-    # Prefer single rebuild when both set:
-    if model_id or provider:
-        kwargs = {"warmup": True}
-        if model_id:
-            kwargs["model_id"] = str(model_id).strip()
-        if provider:
-            kwargs["provider"] = str(provider).strip()
-        # use internal rebuild once
-        engine._rebuild(**kwargs)  # noqa: SLF001
+@app.get("/api/speakers")
+def speakers(model_id: Optional[str] = Query(default=None)):
+    mid = model_id or engine.model_id
+    if mid not in MODEL_REGISTRY:
+        raise HTTPException(status_code=400, detail=f"未知 model_id: {mid}")
+    return {
+        "ok": True,
+        "model_id": mid,
+        "speakers": engine.list_speakers(mid),
+        "num_speakers": MODEL_REGISTRY[mid].num_speakers,
+        "ready": engine.model_ready(mid),
+    }
 
 
 @app.post("/api/tts")
 def synthesize(req: SynthRequest):
-    if not engine.model_ready() and not req.model_id:
+    mid = req.model_id or engine.model_id
+    if not engine.model_ready(mid):
         raise HTTPException(
             status_code=503,
             detail={
-                "message": "模型未下载。请在项目根目录运行: .\\scripts\\download_model.ps1",
-                "missing": engine.missing_files(),
+                "message": f"模型未下载: {mid}。请运行: uv run python scripts/download_models.py --id {mid}",
+                "missing": engine.missing_files(mid),
+                "model_id": mid,
             },
         )
     try:
-        _maybe_switch(req.provider, req.model_id)
-        result = engine.synthesize(req.text, sid=req.sid, speed=req.speed)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except TimeoutError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except (RuntimeError, FileNotFoundError) as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+        if req.provider and req.provider != engine.provider:
+            engine.set_provider(req.provider, warmup=False)
+        result = engine.synthesize(
+            req.text,
+            sid=req.sid,
+            speed=req.speed,
+            model_id=mid,
+            provider=req.provider,
+        )
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=500, detail=f"合成失败: {exc}") from exc
+        raise _http_from_exc(exc) from exc
 
     buf = io.BytesIO()
     sf.write(buf, result.samples, result.sample_rate, format="WAV", subtype="PCM_16")
     buf.seek(0)
-
     out_name = f"tts_{uuid.uuid4().hex[:12]}.wav"
     out_path = OUTPUT_DIR / out_name
     sf.write(str(out_path), result.samples, result.sample_rate, subtype="PCM_16")
-
     headers = {
         "X-Audio-Duration": f"{result.audio_duration:.3f}",
         "X-Elapsed-Seconds": f"{result.elapsed_seconds:.3f}",
         "X-Elapsed-Ms": f"{result.elapsed_seconds * 1000.0:.1f}",
         "X-RTF": f"{result.rtf:.3f}",
         "X-Sample-Rate": str(result.sample_rate),
-        "X-Provider": engine.provider,
-        "X-Model-Id": engine.model_id,
+        "X-Provider": result.provider,
+        "X-Model-Id": result.model_id,
         "X-Speed": f"{req.speed:.3f}",
         "X-Sid": str(int(req.sid)),
         "X-Saved-As": out_name,
@@ -312,45 +323,40 @@ def synthesize(req: SynthRequest):
 
 @app.post("/api/tts/stream")
 def synthesize_http_stream(req: SynthRequest):
-    if not engine.model_ready() and not req.model_id:
+    mid = req.model_id or engine.model_id
+    if not engine.model_ready(mid):
         raise HTTPException(
             status_code=503,
-            detail={
-                "message": "模型未下载。请先运行 scripts/download_model.ps1",
-                "missing": engine.missing_files(),
-            },
+            detail={"message": f"模型未就绪: {mid}", "missing": engine.missing_files(mid)},
         )
-
     try:
-        _maybe_switch(req.provider, req.model_id)
+        if req.provider and req.provider != engine.provider:
+            engine.set_provider(req.provider, warmup=False)
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise _http_from_exc(exc) from exc
 
     def gen():
-        for kind, payload in engine.synthesize_stream(
-            req.text, sid=req.sid, speed=req.speed
-        ):
-            if kind == "meta":
-                yield (json.dumps({"type": "meta", **payload}, ensure_ascii=False) + "\n").encode(
-                    "utf-8"
-                )
-            elif kind == "chunk":
-                arr = np.asarray(payload, dtype=np.float32)
-                yield arr.tobytes(order="C")
-            elif kind == "progress":
-                continue
-            elif kind == "end":
-                return
-            elif kind == "error":
-                raise RuntimeError(str(payload))
+        try:
+            for kind, payload in engine.synthesize_stream(
+                req.text, sid=req.sid, speed=req.speed, model_id=mid, provider=req.provider
+            ):
+                if kind == "meta":
+                    yield (json.dumps({"type": "meta", **payload}, ensure_ascii=False) + "\n").encode("utf-8")
+                elif kind == "chunk":
+                    yield np.asarray(payload, dtype=np.float32).tobytes(order="C")
+                elif kind == "end":
+                    return
+                elif kind == "error":
+                    raise RuntimeError(str(payload))
+        except OverflowError as exc:
+            raise RuntimeError(str(exc)) from exc
 
     headers = {
         "X-Stream-Format": "json-meta-line+f32le",
         "X-Channels": "1",
         "X-Provider": engine.provider,
-        "X-Model-Id": engine.model_id,
+        "X-Model-Id": mid,
         "Cache-Control": "no-store",
-        "Access-Control-Expose-Headers": "X-Stream-Format, X-Channels, X-Provider, X-Model-Id",
     }
     return StreamingResponse(gen(), media_type="application/octet-stream", headers=headers)
 
@@ -359,7 +365,6 @@ def synthesize_http_stream(req: SynthRequest):
 async def ws_tts(websocket: WebSocket):
     await websocket.accept()
     cancel = threading.Event()
-
     try:
         raw = await websocket.receive_text()
         try:
@@ -373,32 +378,27 @@ async def ws_tts(websocket: WebSocket):
         speed = float(req.get("speed", 1.0))
         sid = int(req.get("sid", 0))
         provider = req.get("provider")
-        model_id = req.get("model_id")
+        model_id = req.get("model_id") or engine.model_id
         if not text:
             await websocket.send_json({"type": "error", "message": "文本不能为空"})
             await websocket.close()
             return
 
-        if provider or model_id:
+        if provider and str(provider) != engine.provider:
             try:
-                await asyncio.to_thread(
-                    lambda: _maybe_switch(
-                        str(provider) if provider else None,
-                        str(model_id) if model_id else None,
-                    )
-                )
+                await asyncio.to_thread(lambda: engine.set_provider(str(provider), warmup=False))
             except Exception as exc:  # noqa: BLE001
-                await websocket.send_json({"type": "error", "message": f"切换失败: {exc}"})
+                await websocket.send_json({"type": "error", "message": f"切换 provider 失败: {exc}"})
                 await websocket.close()
                 return
 
-        if not engine.model_ready():
+        if not engine.model_ready(str(model_id)):
             await websocket.send_json(
                 {
                     "type": "error",
-                    "message": "模型未就绪，请先下载模型",
-                    "missing": engine.missing_files(),
-                    "model_id": engine.model_id,
+                    "message": "模型未就绪",
+                    "missing": engine.missing_files(str(model_id)),
+                    "model_id": model_id,
                 }
             )
             await websocket.close()
@@ -410,7 +410,12 @@ async def ws_tts(websocket: WebSocket):
         def producer() -> None:
             try:
                 for kind, payload in engine.synthesize_stream(
-                    text, sid=sid, speed=speed, cancel_event=cancel
+                    text,
+                    sid=sid,
+                    speed=speed,
+                    cancel_event=cancel,
+                    model_id=str(model_id),
+                    provider=str(provider) if provider else None,
                 ):
                     if cancel.is_set():
                         break
@@ -470,6 +475,20 @@ def download(filename: str):
     return FileResponse(path, media_type="audio/wav", filename=safe)
 
 
+# SPA fallback for client-side routes (React Router if any)
+@app.get("/{full_path:path}")
+def spa_fallback(full_path: str):
+    if full_path.startswith("api/") or full_path.startswith("ws/"):
+        raise HTTPException(status_code=404)
+    candidate = STATIC_DIR / full_path
+    if candidate.is_file():
+        return FileResponse(candidate)
+    index_path = STATIC_DIR / "index.html"
+    if index_path.is_file():
+        return FileResponse(index_path)
+    raise HTTPException(status_code=404)
+
+
 def main() -> None:
     import uvicorn
 
@@ -478,6 +497,7 @@ def main() -> None:
         host=DEFAULT_HOST,
         port=DEFAULT_PORT,
         reload=False,
+        workers=1,  # shared in-process engine pool; scale via TTS_ENGINE_POOL_SIZE
     )
 
 

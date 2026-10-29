@@ -1,70 +1,46 @@
-# 作为插件服务给其他网页调用
+# fsatts Plugin API
 
-本服务默认监听 **`0.0.0.0:19658`**，已启用 **CORS**（默认允许任意源 `*`）。
+Base URL 默认：http://127.0.0.1:19658  
+CORS：TTS_CORS_ORIGINS（默认 *）
 
-## 快速检查
+## Health / Status
 
-```bash
-curl -s http://127.0.0.1:19658/api/health
-```
+- GET /api/health — ok、model_ready、inflight、queue_depth、max_inflight、concurrency
+- GET /api/status — 模型列表、说话人、并发统计、voice roles
 
-## 浏览器跨域示例（整段 WAV）
+## Models / Speakers / Provider
 
-```html
-<button id="speak">Speak</button>
-<script>
-const BASE = "http://127.0.0.1:19658"; // 或局域网 IP:19658
+- GET /api/models — 注册表与就绪状态
+- POST /api/models { "model_id", "warmup": true } — 切换默认模型（懒加载池）
+- GET /api/speakers?model_id= — 某模型说话人列表（大列表可搜索由前端处理）
+- GET|POST /api/provider — cpu / cuda
 
-document.getElementById("speak").onclick = async () => {
-  const res = await fetch(`${BASE}/api/tts`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      text: "你好，这是跨域 TTS 调用示例。",
-      speed: 1.0,
-      sid: 0,
-    }),
-  });
-  if (!res.ok) throw new Error(await res.text());
-  const blob = await res.blob();
-  const url = URL.createObjectURL(blob);
-  new Audio(url).play();
-  console.log("elapsed_s", res.headers.get("X-Elapsed-Seconds"));
-};
-</script>
-```
+## TTS
 
-## WebSocket 流式示例
+### POST /api/tts
 
-```javascript
-const ws = new WebSocket("ws://127.0.0.1:19658/ws/tts");
-ws.binaryType = "arraybuffer";
-ws.onopen = () => {
-  ws.send(JSON.stringify({ text: "第一句。第二句。", speed: 1.0, sid: 0 }));
-};
-ws.onmessage = (ev) => {
-  if (typeof ev.data === "string") {
-    const msg = JSON.parse(ev.data);
-    console.log(msg.type, msg);
-  } else {
-    // Float32 LE PCM mono — 用 Web Audio 播放
-    console.log("pcm bytes", ev.data.byteLength);
-  }
-};
-```
+`json
+{
+  "text": "你好 hello",
+  "speed": 1.0,
+  "sid": 0,
+  "model_id": "melo-zh-en-44k",
+  "provider": "cpu"
+}
+`
 
-## CORS 收紧
+返回 udio/wav。响应头：X-Elapsed-Ms、X-RTF、X-Sample-Rate、X-Model-Id、X-Sid 等。
 
-```bash
-# Windows PowerShell
-$env:TTS_CORS_ORIGINS="http://localhost:5173,https://app.example.com"
-.\run_web.ps1
-```
+繁忙（超过 TTS_MAX_INFLIGHT）→ **503** + Retry-After: 2。
 
-## 注意点
+### POST /api/tts/stream
 
-1. **混合内容**：外站若是 `https://`，浏览器可能拦截对 `http://127.0.0.1` 的请求；开发可用本机 https 反代，或页面也用 http。
-2. **WebSocket 源**：`ws://` / `wss://` 需与页面策略一致；CORS 头主要约束 XHR/fetch，WS 仍受浏览器连接策略影响。
-3. **局域网**：把 BASE 换成插件机器 IP，并放行防火墙 TCP **19658**。
-4. **语速 / 角色**：`speed` ∈ [0.5, 2.0]；Melo 中英目前 `sid` 仅 `0`。
-5. **不要公网裸奔**：默认 CORS=* 仅适合受控环境。
+首行 JSON meta（\n 结尾），随后 float32 LE PCM 块。
+
+### WS /ws/tts
+
+首帧 JSON 请求；服务端推送 meta / binary chunk / progress / end / error。
+
+## 并发说明
+
+单进程 uvicorn + 每模型引擎池。请保持 workers=1，用 TTS_ENGINE_POOL_SIZE 扩并行。

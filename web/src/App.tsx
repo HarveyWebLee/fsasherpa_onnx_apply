@@ -53,29 +53,70 @@ class StreamPlayer {
   private ctx: AudioContext | null = null;
   private nextTime = 0;
   private sampleRate = 24000;
-  readonly chunks: Float32Array[] = [];
+  private playing = false;
+  private pending: Float32Array<ArrayBuffer>[] = [];
+  private pendingSamples = 0;
+  /** Hold ~350ms before starting to reduce underruns when RTF > 1. */
+  private minStartSec = 0.35;
+  readonly chunks: Float32Array<ArrayBuffer>[] = [];
 
   start(sampleRate: number) {
     this.stop();
     this.sampleRate = sampleRate;
     this.ctx = new AudioContext({ sampleRate });
-    this.nextTime = this.ctx.currentTime + 0.05;
+    void this.ctx.resume();
+    this.nextTime = 0;
+    this.playing = false;
+    this.pending = [];
+    this.pendingSamples = 0;
     this.chunks.length = 0;
+  }
+
+  private copySamples(samples: Float32Array): Float32Array<ArrayBuffer> {
+    const out = new Float32Array(samples.length);
+    out.set(samples);
+    return out;
+  }
+
+  private schedule(copy: Float32Array<ArrayBuffer>) {
+    const ctx = this.ctx;
+    if (!ctx || !copy.length) return;
+    if (ctx.state === "suspended") void ctx.resume();
+    const buf = ctx.createBuffer(1, copy.length, this.sampleRate);
+    buf.copyToChannel(copy, 0);
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    src.connect(ctx.destination);
+    if (!this.playing) {
+      this.nextTime = ctx.currentTime + 0.05;
+      this.playing = true;
+    }
+    const startAt = Math.max(this.nextTime, ctx.currentTime + 0.02);
+    src.start(startAt);
+    this.nextTime = startAt + buf.duration;
+  }
+
+  private flushPending() {
+    if (!this.pending.length) return;
+    for (const c of this.pending) this.schedule(c);
+    this.pending = [];
+    this.pendingSamples = 0;
   }
 
   push(samples: Float32Array) {
     if (!samples.length) return;
-    const copy = new Float32Array(samples);
+    const copy = this.copySamples(samples);
     this.chunks.push(copy);
     if (!this.ctx) return;
-    const buf = this.ctx.createBuffer(1, copy.length, this.sampleRate);
-    buf.copyToChannel(copy, 0);
-    const src = this.ctx.createBufferSource();
-    src.buffer = buf;
-    src.connect(this.ctx.destination);
-    const startAt = Math.max(this.nextTime, this.ctx.currentTime + 0.01);
-    src.start(startAt);
-    this.nextTime = startAt + buf.duration;
+
+    if (!this.playing) {
+      this.pending.push(copy);
+      this.pendingSamples += copy.length;
+      const minSamples = Math.floor(this.sampleRate * this.minStartSec);
+      if (this.pendingSamples >= minSamples) this.flushPending();
+      return;
+    }
+    this.schedule(copy);
   }
 
   concat(): Float32Array {
@@ -89,6 +130,19 @@ class StreamPlayer {
     return out;
   }
 
+  /** Flush any held preroll and wait until scheduled audio finishes. */
+  async drain(timeoutMs = 120_000): Promise<void> {
+    this.flushPending();
+    const ctx = this.ctx;
+    if (!ctx || !this.playing) return;
+    const deadline = performance.now() + timeoutMs;
+    while (ctx.state !== "closed" && ctx.currentTime + 0.03 < this.nextTime) {
+      if (performance.now() > deadline) break;
+      await new Promise((r) => setTimeout(r, 40));
+    }
+    await new Promise((r) => setTimeout(r, 60));
+  }
+
   stop() {
     try {
       void this.ctx?.close();
@@ -96,6 +150,10 @@ class StreamPlayer {
       /* ignore */
     }
     this.ctx = null;
+    this.nextTime = 0;
+    this.playing = false;
+    this.pending = [];
+    this.pendingSamples = 0;
   }
 }
 
@@ -163,14 +221,22 @@ export default function App() {
     });
   }, [refresh, message]);
 
+  // Revoke prior blob URLs only — never stop the stream player here.
+  // Stopping on audioUrl change closed AudioContext as soon as synthesis
+  // finished, cutting off audio that was still scheduled ahead of currentTime.
+  useEffect(() => {
+    return () => {
+      if (audioUrl) URL.revokeObjectURL(audioUrl);
+    };
+  }, [audioUrl]);
+
   useEffect(() => {
     const player = playerRef.current;
     return () => {
-      if (audioUrl) URL.revokeObjectURL(audioUrl);
       player.stop();
       abortRef.current?.abort();
     };
-  }, [audioUrl]);
+  }, []);
 
   const readyModels = useMemo(() => models.filter((m) => m.ready), [models]);
   const currentModel =
@@ -302,6 +368,8 @@ export default function App() {
       模式: "边合成边播放",
     });
     setProgress(1);
+    // Keep AudioContext alive until scheduled buffers finish.
+    await player.drain();
   };
 
   const doSynth = async () => {

@@ -191,7 +191,11 @@ export function synthesizeStreamWs(
     ws.onmessage = (ev) => {
       if (typeof ev.data !== "string") {
         const buf = ev.data as ArrayBuffer;
-        handlers.onChunk?.(new Float32Array(buf.slice(0)));
+        // Ensure float32 framing (drop trailing odd bytes if any).
+        const usable = buf.byteLength - (buf.byteLength % 4);
+        if (usable > 0) {
+          handlers.onChunk?.(new Float32Array(buf.slice(0, usable)));
+        }
         return;
       }
       try {
